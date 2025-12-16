@@ -6,7 +6,8 @@ import * as Prompts from "../prompts/prompts";
 import { produce } from "immer";
 import { useGetMessageSets } from "./MessageAPI";
 import { llmConversation } from "../ChatState";
-import { simpleSummarizeLLM } from "../simpleLLM";
+import { simpleLLM } from "../simpleLLM";
+import { SimpleCompletionMode } from "../ModelProviders/simple/ISimpleCompletionProvider";
 import _ from "lodash";
 import { useNavigate } from "react-router-dom";
 import { db } from "../DB";
@@ -401,11 +402,10 @@ function useRegenerateProjectContextSummary() {
                 .map((m) => `${m.role}: ${m.content}`)
                 .join("\n\n");
 
-            const summary = await simpleSummarizeLLM(
+            const summary = await simpleLLM(
                 Prompts.PROJECT_CONTEXT_SUMMARY_PROMPT(conversationText),
                 {
-                    // NOTE: If you change this model _provider_, you'll need to update the response handling in simpleSummarizeLLM.ts
-                    model: "gemini-2.5-flash",
+                    model: SimpleCompletionMode.SUMMARIZER,
                     maxTokens: 8192,
                 },
             );
