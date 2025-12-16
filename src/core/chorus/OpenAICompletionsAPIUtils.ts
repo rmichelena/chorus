@@ -148,13 +148,13 @@ async function convertMessage(
                 {
                     role: message.role,
                     content: [
-                        ...imageContents,
                         {
                             type: "text",
                             text: ensureNonEmptyTextParameter(
                                 attachmentTexts + message.content,
                             ),
                         },
+                        ...imageContents,
                     ],
                 },
             ];
