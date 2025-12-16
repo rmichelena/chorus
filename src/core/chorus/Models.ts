@@ -379,7 +379,13 @@ export async function downloadOpenRouterModels(db: Database): Promise<number> {
         return 0;
     }
     const { data: openRouterModels } = (await response.json()) as {
-        data: { id: string; name: string }[];
+        data: {
+            id: string;
+            name: string;
+            architecture?: {
+                input_modalities?: string[];
+            };
+        }[];
     };
 
     await db.execute(
@@ -387,10 +393,12 @@ export async function downloadOpenRouterModels(db: Database): Promise<number> {
     );
 
     await Promise.all(
-        openRouterModels.map((model: { id: string; name: string }) => {
-            const supportsImages = IMAGE_SUPPORTED_OPENROUTER_MODELS.includes(
-                model.id,
-            );
+        openRouterModels.map((model) => {
+            // Check if the model supports images based on API metadata
+            const supportsImages =
+                model.architecture?.input_modalities?.includes("image") ??
+                false;
+
             return saveModelAndDefaultConfig(
                 db,
                 {
