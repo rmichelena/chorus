@@ -2485,5 +2485,52 @@ You have full access to bash commands on the user''''s computer. If you write a 
                     ('system', 'anthropic::claude-opus-4-5-20251101', 'anthropic::claude-opus-4-5-20251101', 'Claude Opus 4.5', '', 0, '2025-10-15 00:00:00');
             "#,
         },
+        Migration {
+            version: 133,
+            description: "add pricing columns to models table",
+            kind: MigrationKind::Up,
+            sql: r#"
+                ALTER TABLE models ADD COLUMN prompt_price_per_token REAL;
+                ALTER TABLE models ADD COLUMN completion_price_per_token REAL;
+            "#,
+        },
+        Migration {
+            version: 134,
+            description: "add token usage and cost to messages table",
+            kind: MigrationKind::Up,
+            sql: r#"
+                ALTER TABLE messages ADD COLUMN prompt_tokens INTEGER;
+                ALTER TABLE messages ADD COLUMN completion_tokens INTEGER;
+                ALTER TABLE messages ADD COLUMN total_tokens INTEGER;
+                ALTER TABLE messages ADD COLUMN cost_usd REAL;
+            "#,
+        },
+        Migration {
+            version: 135,
+            description: "add total cost to chats table",
+            kind: MigrationKind::Up,
+            sql: r#"
+                ALTER TABLE chats ADD COLUMN total_cost_usd REAL DEFAULT 0.0;
+                CREATE INDEX IF NOT EXISTS idx_messages_chat_cost ON messages(chat_id, cost_usd);
+            "#,
+        },
+        Migration {
+            version: 136,
+            description: "add total cost to projects table",
+            kind: MigrationKind::Up,
+            sql: r#"
+                ALTER TABLE projects ADD COLUMN total_cost_usd REAL DEFAULT 0.0;
+                CREATE INDEX IF NOT EXISTS idx_chats_project_cost ON chats(project_id, total_cost_usd);
+            "#,
+        },
+        Migration {
+            version: 137,
+            description: "set default cost values for existing rows",
+            kind: MigrationKind::Up,
+            sql: r#"
+                UPDATE chats SET total_cost_usd = 0.0 WHERE total_cost_usd IS NULL;
+                UPDATE projects SET total_cost_usd = 0.0 WHERE total_cost_usd IS NULL;
+            "#,
+        },
     ];
 }
