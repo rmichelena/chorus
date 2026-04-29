@@ -505,6 +505,7 @@ export function ManageModelsBox({
             "google",
             "perplexity",
             "grok",
+            "fireworks",
         ] as const;
 
         const directByProvider = Object.fromEntries(
@@ -801,6 +802,18 @@ export function ManageModelsBox({
                             onToggleModelConfig={handleToggleModelConfig}
                             onAddApiKey={handleAddApiKey}
                             groupId="perplexity"
+                            showCost={showCost}
+                        />
+                    )}
+                    {modelGroups.directByProvider.fireworks.length > 0 && (
+                        <ModelGroup
+                            heading="Fireworks"
+                            models={modelGroups.directByProvider.fireworks}
+                            checkedModelConfigIds={checkedModelConfigIds}
+                            mode={mode}
+                            onToggleModelConfig={handleToggleModelConfig}
+                            onAddApiKey={handleAddApiKey}
+                            groupId="fireworks"
                             showCost={showCost}
                         />
                     )}

@@ -5,6 +5,7 @@ import { SimpleCompletionProviderAnthropic } from "./SimpleCompletionProviderAnt
 import { SimpleCompletionProviderOpenRouter } from "./SimpleCompletionProviderOpenRouter";
 import { SimpleCompletionProviderOpenAI } from "./SimpleCompletionProviderOpenAI";
 import { SimpleCompletionProviderGoogle } from "./SimpleCompletionProviderGoogle";
+import { SimpleCompletionProviderFireworks } from "./SimpleCompletionProviderFireworks";
 
 type ProviderConfig = {
     name: string;
@@ -32,6 +33,11 @@ const PROVIDER_PRECEDENCE: ProviderConfig[] = [
         name: "openrouter",
         key: "openrouter",
         create: (key) => new SimpleCompletionProviderOpenRouter(key),
+    },
+    {
+        name: "fireworks",
+        key: "fireworks",
+        create: (key) => new SimpleCompletionProviderFireworks(key),
     },
 ];
 
@@ -62,6 +68,6 @@ export function getSimpleCompletionProvider(
     }
 
     throw new Error(
-        `Please add an Anthropic, OpenAI, Google, or OpenRouter API key in Settings to generate chat titles. ${reasons.join(" ")}`,
+        `Please add an Anthropic, OpenAI, Google, OpenRouter, or Fireworks API key in Settings to generate chat titles. ${reasons.join(" ")}`,
     );
 }

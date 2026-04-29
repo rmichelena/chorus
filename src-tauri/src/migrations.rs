@@ -2554,5 +2554,19 @@ You have full access to bash commands on the user''''s computer. If you write a 
                 UPDATE projects SET total_cost_usd = 0.0 WHERE total_cost_usd IS NULL;
             "#,
         },
+        Migration {
+            version: 139,
+            description: "add fireworks hosted models",
+            kind: MigrationKind::Up,
+            sql: r#"
+                INSERT OR REPLACE INTO models (id, display_name, is_enabled, supported_attachment_types) VALUES
+                    ('fireworks::accounts/fireworks/models/llama-v3p1-8b-instruct', 'Llama 3.1 8B Instruct (Fireworks)', 1, '["text", "webpage"]'),
+                    ('fireworks::accounts/fireworks/models/llama-v3p1-70b-instruct', 'Llama 3.1 70B Instruct (Fireworks)', 1, '["text", "webpage"]');
+
+                INSERT OR REPLACE INTO model_configs (author, id, model_id, display_name, system_prompt, is_default) VALUES
+                    ('system', 'fireworks::accounts/fireworks/models/llama-v3p1-8b-instruct', 'fireworks::accounts/fireworks/models/llama-v3p1-8b-instruct', 'Llama 3.1 8B Instruct (Fireworks)', '', 0),
+                    ('system', 'fireworks::accounts/fireworks/models/llama-v3p1-70b-instruct', 'fireworks::accounts/fireworks/models/llama-v3p1-70b-instruct', 'Llama 3.1 70B Instruct (Fireworks)', '', 0);
+            "#,
+        },
     ];
 }

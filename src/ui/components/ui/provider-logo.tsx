@@ -64,6 +64,8 @@ export function ProviderLogo({
                         className="w-4 h-4 dark:invert"
                     />
                 );
+            case "fireworks":
+                return <BoxIcon className="w-4 h-4" />;
             case "openrouter":
                 if (modelId && modelId in OPENROUTER_CUSTOM_PROVIDER_LOGOS) {
                     return getLogoComponent(
