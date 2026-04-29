@@ -74,6 +74,7 @@ type ModelConfigDBRow = {
 // Track whether we've attempted to refresh OpenRouter models within
 // the current session, and store the promise if a download is in progress.
 let openRouterDownloadPromise: Promise<number> | null = null;
+let fireworksDownloadPromise: Promise<number> | null = null;
 
 function readModel(row: ModelDBRow): Models.Model {
     return {
@@ -122,6 +123,17 @@ export async function fetchModelConfigs() {
             await openRouterDownloadPromise;
             // Keep the promise stored so subsequent calls know it completed
             // (we don't clear it to prevent re-downloads within the session)
+        }
+    }
+    if (apiKeys.fireworks) {
+        if (fireworksDownloadPromise) {
+            await fireworksDownloadPromise;
+        } else {
+            fireworksDownloadPromise = Models.downloadFireworksModels(
+                db,
+                apiKeys.fireworks,
+            );
+            await fireworksDownloadPromise;
         }
     }
 
@@ -340,6 +352,27 @@ export function useRefreshOllamaModels() {
     });
 }
 
+export function useRefreshFireworksModels() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationKey: ["refreshFireworksModels"] as const,
+        mutationFn: async () => {
+            const apiKeys = await getApiKeys();
+            if (!apiKeys.fireworks) {
+                throw new Error(
+                    "Please add your Fireworks API key in Settings.",
+                );
+            }
+            await Models.downloadFireworksModels(db, apiKeys.fireworks);
+        },
+        onSuccess: async () => {
+            await queryClient.invalidateQueries(
+                modelConfigQueries.listConfigs(),
+            );
+        },
+    });
+}
+
 export function useRefreshLMStudioModels() {
     const queryClient = useQueryClient();
     return useMutation({
@@ -359,6 +392,7 @@ export function useRefreshModels() {
     const refreshOpenRouterModels = useRefreshOpenRouterModels();
     const refreshOllamaModels = useRefreshOllamaModels();
     const refreshLMStudioModels = useRefreshLMStudioModels();
+    const refreshFireworksModels = useRefreshFireworksModels();
     return useMutation({
         mutationKey: ["refreshAllModels"] as const,
         mutationFn: async () => {
@@ -366,6 +400,7 @@ export function useRefreshModels() {
                 refreshOpenRouterModels.mutateAsync(),
                 refreshOllamaModels.mutateAsync(),
                 refreshLMStudioModels.mutateAsync(),
+                refreshFireworksModels.mutateAsync(),
             ]);
         },
     });

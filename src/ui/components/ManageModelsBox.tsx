@@ -353,12 +353,23 @@ export function ManageModelsBox({
     }, [mode, modelConfigs.data]);
 
     const [searchQuery, setSearchQuery] = useState("");
+    const [hiddenProviders, setHiddenProviders] = useState<
+        Record<string, boolean>
+    >({
+        anthropic: false,
+        openai: false,
+        google: false,
+        grok: false,
+        perplexity: false,
+        fireworks: false,
+    });
     const [spinningProviders, setSpinningProviders] = useState<
         Record<string, boolean>
     >({
         ollama: false,
         lmstudio: false,
         openrouter: false,
+        fireworks: false,
     });
     const listRef = useRef<HTMLDivElement>(null);
 
@@ -445,9 +456,10 @@ export function ManageModelsBox({
     const refreshLMStudio = ModelsAPI.useRefreshLMStudioModels();
     const refreshOllama = ModelsAPI.useRefreshOllamaModels();
     const refreshOpenRouter = ModelsAPI.useRefreshOpenRouterModels();
+    const refreshFireworks = ModelsAPI.useRefreshFireworksModels();
 
     const handleRefreshProviders = async (
-        provider: "ollama" | "lmstudio" | "openrouter",
+        provider: "ollama" | "lmstudio" | "openrouter" | "fireworks",
     ) => {
         setSpinningProviders((prev) => ({ ...prev, [provider]: true }));
         try {
@@ -457,6 +469,8 @@ export function ManageModelsBox({
                 await refreshLMStudio.mutateAsync();
             } else if (provider === "openrouter") {
                 await refreshOpenRouter.mutateAsync();
+            } else if (provider === "fireworks") {
+                await refreshFireworks.mutateAsync();
             }
         } finally {
             setTimeout(() => {
@@ -472,6 +486,14 @@ export function ManageModelsBox({
     const handleAddCustomModel = useCallback(() => {
         navigate("/new-prompt");
     }, [navigate]);
+
+    const hideProvider = useCallback((provider: string) => {
+        setHiddenProviders((prev) => ({ ...prev, [provider]: true }));
+    }, []);
+
+    const showProvider = useCallback((provider: string) => {
+        setHiddenProviders((prev) => ({ ...prev, [provider]: false }));
+    }, []);
 
     // Compute filtered model groups based on search
     const modelGroups = useMemo(() => {
@@ -499,13 +521,16 @@ export function ManageModelsBox({
         );
 
         // Direct provider models grouped by provider
+        const fireworksModels = systemModels.filter(
+            (m) => getProviderName(m.modelId) === "fireworks",
+        );
+
         const directProviders = [
             "anthropic",
             "openai",
             "google",
             "perplexity",
             "grok",
-            "fireworks",
         ] as const;
 
         const directByProvider = Object.fromEntries(
@@ -524,6 +549,7 @@ export function ManageModelsBox({
             custom: filterBySearch(userModels, searchTerms),
             local: filterBySearch(localModels, searchTerms),
             openrouter: filterBySearch(openrouterModels, searchTerms),
+            fireworks: filterBySearch(fireworksModels, searchTerms),
             directByProvider,
         };
     }, [modelConfigs.data, searchQuery]);
@@ -743,11 +769,129 @@ export function ManageModelsBox({
                             }
                         />
                     )}
+                    {(modelGroups.fireworks.length > 0 ||
+                        searchQuery === "") && (
+                        <ModelGroup
+                            heading={
+                                <div className="flex items-center justify-between w-full">
+                                    <span>Fireworks</span>
+                                    {!hiddenProviders.fireworks && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                hideProvider("fireworks");
+                                            }}
+                                            className="p-1.5 hover:bg-accent text-muted-foreground/50 rounded-md flex items-center gap-1"
+                                            title="Hide Fireworks models"
+                                        >
+                                            <ChevronUpIcon className="w-3 h-3" />
+                                            <span className="text-[10px]">
+                                                Hide
+                                            </span>
+                                        </button>
+                                    )}
+                                </div>
+                            }
+                            models={modelGroups.fireworks}
+                            checkedModelConfigIds={checkedModelConfigIds}
+                            mode={mode}
+                            onToggleModelConfig={handleToggleModelConfig}
+                            onAddApiKey={handleAddApiKey}
+                            groupId="fireworks"
+                            showCost={showCost}
+                            refreshButton={
+                                !hiddenProviders.fireworks &&
+                                apiKeys?.fireworks && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            void handleRefreshProviders(
+                                                "fireworks",
+                                            );
+                                        }}
+                                        className="p-1.5 hover:bg-accent text-muted-foreground/50 rounded-md flex items-center gap-2"
+                                        title="Refresh Fireworks models"
+                                    >
+                                        <RefreshCcwIcon
+                                            className={`w-3 h-3 ${
+                                                spinningProviders["fireworks"]
+                                                    ? "animate-spin"
+                                                    : ""
+                                            }`}
+                                        />
+                                        <span className="text-sm">
+                                            Refresh
+                                        </span>
+                                    </button>
+                                )
+                            }
+                            emptyState={
+                                hiddenProviders.fireworks ? (
+                                    <div className="px-2 mb-4">
+                                        <Button
+                                            variant="outline"
+                                            className="w-full"
+                                            size="sm"
+                                            onClick={(
+                                                e: React.MouseEvent<HTMLButtonElement>,
+                                            ) => {
+                                                e.preventDefault();
+                                                showProvider("fireworks");
+                                            }}
+                                        >
+                                            Show Fireworks models
+                                        </Button>
+                                    </div>
+                                ) : apiKeys && !apiKeys.fireworks ? (
+                                    <div className="px-2 mb-4 text-sm text-muted-foreground">
+                                        <p className="mb-2">
+                                            Fireworks models require an API key.
+                                        </p>
+                                        <Button
+                                            variant="outline"
+                                            className="w-full"
+                                            size="sm"
+                                            onClick={(
+                                                e: React.MouseEvent<HTMLButtonElement>,
+                                            ) => {
+                                                e.preventDefault();
+                                                handleAddApiKey();
+                                            }}
+                                        >
+                                            Add Fireworks API key in Settings
+                                        </Button>
+                                    </div>
+                                ) : undefined
+                            }
+                        />
+                    )}
 
                     {/* Direct Provider Models (Anthropic, OpenAI, Google, etc.) */}
                     {modelGroups.directByProvider.anthropic.length > 0 && (
                         <ModelGroup
-                            heading="Anthropic"
+                            heading={
+                                <div className="flex items-center justify-between w-full">
+                                    <span>Anthropic</span>
+                                    {!hiddenProviders.anthropic && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                hideProvider("anthropic");
+                                            }}
+                                            className="p-1.5 hover:bg-accent text-muted-foreground/50 rounded-md flex items-center gap-1"
+                                            title="Hide Anthropic models"
+                                        >
+                                            <ChevronUpIcon className="w-3 h-3" />
+                                            <span className="text-[10px]">
+                                                Hide
+                                            </span>
+                                        </button>
+                                    )}
+                                </div>
+                            }
                             models={modelGroups.directByProvider.anthropic}
                             checkedModelConfigIds={checkedModelConfigIds}
                             mode={mode}
@@ -755,11 +899,50 @@ export function ManageModelsBox({
                             onAddApiKey={handleAddApiKey}
                             groupId="anthropic"
                             showCost={showCost}
+                            emptyState={
+                                hiddenProviders.anthropic ? (
+                                    <div className="px-2 mb-4">
+                                        <Button
+                                            variant="outline"
+                                            className="w-full"
+                                            size="sm"
+                                            onClick={(
+                                                e: React.MouseEvent<HTMLButtonElement>,
+                                            ) => {
+                                                e.preventDefault();
+                                                showProvider("anthropic");
+                                            }}
+                                        >
+                                            Show Anthropic models
+                                        </Button>
+                                    </div>
+                                ) : undefined
+                            }
                         />
                     )}
                     {modelGroups.directByProvider.openai.length > 0 && (
                         <ModelGroup
-                            heading="OpenAI"
+                            heading={
+                                <div className="flex items-center justify-between w-full">
+                                    <span>OpenAI</span>
+                                    {!hiddenProviders.openai && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                hideProvider("openai");
+                                            }}
+                                            className="p-1.5 hover:bg-accent text-muted-foreground/50 rounded-md flex items-center gap-1"
+                                            title="Hide OpenAI models"
+                                        >
+                                            <ChevronUpIcon className="w-3 h-3" />
+                                            <span className="text-[10px]">
+                                                Hide
+                                            </span>
+                                        </button>
+                                    )}
+                                </div>
+                            }
                             models={modelGroups.directByProvider.openai}
                             checkedModelConfigIds={checkedModelConfigIds}
                             mode={mode}
@@ -767,11 +950,50 @@ export function ManageModelsBox({
                             onAddApiKey={handleAddApiKey}
                             groupId="openai"
                             showCost={showCost}
+                            emptyState={
+                                hiddenProviders.openai ? (
+                                    <div className="px-2 mb-4">
+                                        <Button
+                                            variant="outline"
+                                            className="w-full"
+                                            size="sm"
+                                            onClick={(
+                                                e: React.MouseEvent<HTMLButtonElement>,
+                                            ) => {
+                                                e.preventDefault();
+                                                showProvider("openai");
+                                            }}
+                                        >
+                                            Show OpenAI models
+                                        </Button>
+                                    </div>
+                                ) : undefined
+                            }
                         />
                     )}
                     {modelGroups.directByProvider.google.length > 0 && (
                         <ModelGroup
-                            heading="Google"
+                            heading={
+                                <div className="flex items-center justify-between w-full">
+                                    <span>Google</span>
+                                    {!hiddenProviders.google && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                hideProvider("google");
+                                            }}
+                                            className="p-1.5 hover:bg-accent text-muted-foreground/50 rounded-md flex items-center gap-1"
+                                            title="Hide Google models"
+                                        >
+                                            <ChevronUpIcon className="w-3 h-3" />
+                                            <span className="text-[10px]">
+                                                Hide
+                                            </span>
+                                        </button>
+                                    )}
+                                </div>
+                            }
                             models={modelGroups.directByProvider.google}
                             checkedModelConfigIds={checkedModelConfigIds}
                             mode={mode}
@@ -779,11 +1001,50 @@ export function ManageModelsBox({
                             onAddApiKey={handleAddApiKey}
                             groupId="google"
                             showCost={showCost}
+                            emptyState={
+                                hiddenProviders.google ? (
+                                    <div className="px-2 mb-4">
+                                        <Button
+                                            variant="outline"
+                                            className="w-full"
+                                            size="sm"
+                                            onClick={(
+                                                e: React.MouseEvent<HTMLButtonElement>,
+                                            ) => {
+                                                e.preventDefault();
+                                                showProvider("google");
+                                            }}
+                                        >
+                                            Show Google models
+                                        </Button>
+                                    </div>
+                                ) : undefined
+                            }
                         />
                     )}
                     {modelGroups.directByProvider.grok.length > 0 && (
                         <ModelGroup
-                            heading="Grok"
+                            heading={
+                                <div className="flex items-center justify-between w-full">
+                                    <span>Grok</span>
+                                    {!hiddenProviders.grok && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                hideProvider("grok");
+                                            }}
+                                            className="p-1.5 hover:bg-accent text-muted-foreground/50 rounded-md flex items-center gap-1"
+                                            title="Hide Grok models"
+                                        >
+                                            <ChevronUpIcon className="w-3 h-3" />
+                                            <span className="text-[10px]">
+                                                Hide
+                                            </span>
+                                        </button>
+                                    )}
+                                </div>
+                            }
                             models={modelGroups.directByProvider.grok}
                             checkedModelConfigIds={checkedModelConfigIds}
                             mode={mode}
@@ -791,11 +1052,50 @@ export function ManageModelsBox({
                             onAddApiKey={handleAddApiKey}
                             groupId="grok"
                             showCost={showCost}
+                            emptyState={
+                                hiddenProviders.grok ? (
+                                    <div className="px-2 mb-4">
+                                        <Button
+                                            variant="outline"
+                                            className="w-full"
+                                            size="sm"
+                                            onClick={(
+                                                e: React.MouseEvent<HTMLButtonElement>,
+                                            ) => {
+                                                e.preventDefault();
+                                                showProvider("grok");
+                                            }}
+                                        >
+                                            Show Grok models
+                                        </Button>
+                                    </div>
+                                ) : undefined
+                            }
                         />
                     )}
                     {modelGroups.directByProvider.perplexity.length > 0 && (
                         <ModelGroup
-                            heading="Perplexity"
+                            heading={
+                                <div className="flex items-center justify-between w-full">
+                                    <span>Perplexity</span>
+                                    {!hiddenProviders.perplexity && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                hideProvider("perplexity");
+                                            }}
+                                            className="p-1.5 hover:bg-accent text-muted-foreground/50 rounded-md flex items-center gap-1"
+                                            title="Hide Perplexity models"
+                                        >
+                                            <ChevronUpIcon className="w-3 h-3" />
+                                            <span className="text-[10px]">
+                                                Hide
+                                            </span>
+                                        </button>
+                                    )}
+                                </div>
+                            }
                             models={modelGroups.directByProvider.perplexity}
                             checkedModelConfigIds={checkedModelConfigIds}
                             mode={mode}
@@ -803,18 +1103,25 @@ export function ManageModelsBox({
                             onAddApiKey={handleAddApiKey}
                             groupId="perplexity"
                             showCost={showCost}
-                        />
-                    )}
-                    {modelGroups.directByProvider.fireworks.length > 0 && (
-                        <ModelGroup
-                            heading="Fireworks"
-                            models={modelGroups.directByProvider.fireworks}
-                            checkedModelConfigIds={checkedModelConfigIds}
-                            mode={mode}
-                            onToggleModelConfig={handleToggleModelConfig}
-                            onAddApiKey={handleAddApiKey}
-                            groupId="fireworks"
-                            showCost={showCost}
+                            emptyState={
+                                hiddenProviders.perplexity ? (
+                                    <div className="px-2 mb-4">
+                                        <Button
+                                            variant="outline"
+                                            className="w-full"
+                                            size="sm"
+                                            onClick={(
+                                                e: React.MouseEvent<HTMLButtonElement>,
+                                            ) => {
+                                                e.preventDefault();
+                                                showProvider("perplexity");
+                                            }}
+                                        >
+                                            Show Perplexity models
+                                        </Button>
+                                    </div>
+                                ) : undefined
+                            }
                         />
                     )}
 

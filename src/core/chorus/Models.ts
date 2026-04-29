@@ -367,6 +367,54 @@ export async function DEPRECATED_USE_HOOK_INSTEAD_downloadModels(
 }
 
 /**
+ * Downloads models from Fireworks to refresh the database.
+ */
+export async function downloadFireworksModels(
+    db: Database,
+    apiKey: string,
+): Promise<number> {
+    const response = await fetch("https://api.fireworks.ai/inference/v1/models", {
+        headers: {
+            Authorization: `Bearer ${apiKey}`,
+        },
+    });
+    if (!response.ok) {
+        console.error("Failed to fetch Fireworks models");
+        return 0;
+    }
+
+    const payload = (await response.json()) as {
+        data?: {
+            id: string;
+            name?: string;
+        }[];
+    };
+    const fireworksModels = payload.data ?? [];
+
+    await db.execute(
+        "UPDATE models SET is_enabled = 0 WHERE id LIKE 'fireworks::%'",
+    );
+
+    await Promise.all(
+        fireworksModels.map((model) =>
+            saveModelAndDefaultConfig(
+                db,
+                {
+                    id: `fireworks::${model.id}`,
+                    displayName: model.name || model.id,
+                    supportedAttachmentTypes: ["text", "webpage", "image"],
+                    isEnabled: true,
+                    isInternal: false,
+                },
+                model.name || model.id,
+            ),
+        ),
+    );
+
+    return fireworksModels.length;
+}
+
+/**
  * Downloads models from OpenRouter to refresh the database.
  */
 export async function downloadOpenRouterModels(db: Database): Promise<number> {
