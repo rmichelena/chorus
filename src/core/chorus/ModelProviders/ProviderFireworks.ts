@@ -49,18 +49,19 @@ export class ProviderFireworks implements IProvider {
             },
         );
 
-        const client = new OpenAI({
-            baseURL: customBaseUrl || "https://api.fireworks.ai/inference/v1",
-            apiKey: apiKeys.fireworks,
-            defaultHeaders: {
-                ...(additionalHeaders ?? {}),
-                "Content-Type": "application/json",
-            },
-            dangerouslyAllowBrowser: true,
-        });
+        const fireworksBaseUrl = "https://api.fireworks.ai/inference/v1";
+        const createClient = (baseURL: string) =>
+            new OpenAI({
+                baseURL,
+                apiKey: apiKeys.fireworks,
+                defaultHeaders: {
+                    ...(additionalHeaders ?? {}),
+                    "Content-Type": "application/json",
+                },
+                dangerouslyAllowBrowser: true,
+            });
 
-        try {
-            const stream = await client.chat.completions.create({
+        const requestBody: OpenAI.ChatCompletionCreateParamsStreaming = {
                 model: modelName,
                 messages: [
                     ...(modelConfig.systemPrompt
@@ -82,7 +83,33 @@ export class ProviderFireworks implements IProvider {
                           tool_choice: "auto" as const,
                       }
                     : {}),
-            });
+            };
+
+        try {
+            let stream: AsyncIterable<OpenAI.ChatCompletionChunk>;
+            try {
+                stream = await createClient(
+                    customBaseUrl || fireworksBaseUrl,
+                ).chat.completions.create(requestBody);
+            } catch (firstError) {
+                // If user configured a custom base URL and that path fails with
+                // a connection-level issue, retry directly against Fireworks.
+                if (
+                    customBaseUrl &&
+                    isConnectionLevelError(firstError) &&
+                    customBaseUrl !== fireworksBaseUrl
+                ) {
+                    console.warn(
+                        "[ProviderFireworks] custom base URL failed; retrying with default Fireworks endpoint",
+                        customBaseUrl,
+                    );
+                    stream = await createClient(
+                        fireworksBaseUrl,
+                    ).chat.completions.create(requestBody);
+                } else {
+                    throw firstError;
+                }
+            }
 
             const chunks: OpenAI.ChatCompletionChunk[] = [];
 
@@ -121,6 +148,21 @@ export class ProviderFireworks implements IProvider {
             throw new Error(parsed);
         }
     }
+}
+
+function isConnectionLevelError(error: unknown): boolean {
+    if (!error || typeof error !== "object") {
+        return false;
+    }
+    const e = error as { message?: string; status?: number };
+    const msg = (e.message || "").toLowerCase();
+    return (
+        e.status === undefined &&
+        (msg.includes("connection error") ||
+            msg.includes("network error") ||
+            msg.includes("fetch failed") ||
+            msg.includes("timeout"))
+    );
 }
 
 function parseFireworksError(error: unknown): string {
