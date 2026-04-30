@@ -281,6 +281,10 @@ export function getProviderName(modelId: string): ProviderName {
     return providerName as ProviderName;
 }
 
+export function formatModelPathForDisplay(modelId: string): string {
+    return modelId.replace(/^accounts\/fireworks\/models\//, "fireworks/");
+}
+
 function getProvider(providerName: string): IProvider {
     switch (providerName) {
         case "openai":
@@ -373,23 +377,31 @@ export async function downloadFireworksModels(
     db: Database,
     apiKey: string,
 ): Promise<number> {
-    const response = await fetch("https://api.fireworks.ai/inference/v1/models", {
-        headers: {
-            Authorization: `Bearer ${apiKey}`,
-        },
+    const params = new URLSearchParams({
+        filter: "supports_serverless=true",
+        pageSize: "200",
     });
+    const response = await fetch(
+        `https://api.fireworks.ai/v1/accounts/fireworks/models?${params.toString()}`,
+        {
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+            },
+        },
+    );
     if (!response.ok) {
-        console.error("Failed to fetch Fireworks models");
+        console.error("Failed to fetch Fireworks models", response.status);
         return 0;
     }
 
     const payload = (await response.json()) as {
-        data?: {
-            id: string;
-            name?: string;
+        models?: {
+            name: string;
+            displayName?: string;
+            supportsImageInput?: boolean;
         }[];
     };
-    const fireworksModels = payload.data ?? [];
+    const fireworksModels = payload.models ?? [];
 
     await db.execute(
         "UPDATE models SET is_enabled = 0 WHERE id LIKE 'fireworks::%'",
@@ -400,13 +412,17 @@ export async function downloadFireworksModels(
             saveModelAndDefaultConfig(
                 db,
                 {
-                    id: `fireworks::${model.id}`,
-                    displayName: model.name || model.id,
-                    supportedAttachmentTypes: ["text", "webpage", "image"],
+                    id: `fireworks::${model.name}`,
+                    displayName: formatModelPathForDisplay(
+                        model.displayName || model.name,
+                    ),
+                    supportedAttachmentTypes: model.supportsImageInput
+                        ? ["text", "webpage", "image"]
+                        : ["text", "webpage"],
                     isEnabled: true,
                     isInternal: false,
                 },
-                model.name || model.id,
+                formatModelPathForDisplay(model.displayName || model.name),
             ),
         ),
     );

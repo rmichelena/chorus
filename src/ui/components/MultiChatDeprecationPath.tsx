@@ -119,6 +119,9 @@ function getMessageModelName(
     if (provider === "unknown_provider" && modelId === "unknown_model") {
         return modelName;
     }
+    if (provider === "fireworks" && modelId) {
+        return Models.formatModelPathForDisplay(modelId);
+    }
     // final fallback: unknown
     return "Unknown sender";
 }

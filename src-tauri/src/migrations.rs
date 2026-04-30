@@ -2568,5 +2568,19 @@ You have full access to bash commands on the user''''s computer. If you write a 
                     ('system', 'fireworks::accounts/fireworks/models/llama-v3p1-70b-instruct', 'fireworks::accounts/fireworks/models/llama-v3p1-70b-instruct', 'Llama 3.1 70B Instruct (Fireworks)', '', 0);
             "#,
         },
+        Migration {
+            version: 140,
+            description: "normalize fireworks model display names",
+            kind: MigrationKind::Up,
+            sql: r#"
+                UPDATE models
+                SET display_name = REPLACE(display_name, 'accounts/fireworks/models/', 'fireworks/')
+                WHERE id LIKE 'fireworks::accounts/fireworks/models/%';
+
+                UPDATE model_configs
+                SET display_name = REPLACE(display_name, 'accounts/fireworks/models/', 'fireworks/')
+                WHERE model_id LIKE 'fireworks::accounts/fireworks/models/%';
+            "#,
+        },
     ];
 }
