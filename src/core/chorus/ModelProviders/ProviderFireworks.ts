@@ -50,76 +50,40 @@ export class ProviderFireworks implements IProvider {
         );
 
         const fireworksBaseUrl = "https://api.fireworks.ai/inference/v1";
-        const createClient = (baseURL: string) =>
-            new OpenAI({
-                baseURL,
-                apiKey: apiKeys.fireworks,
-                defaultHeaders: {
-                    ...(additionalHeaders ?? {}),
-                    "Content-Type": "application/json",
-                    "x-stainless-arch": null,
-                    "x-stainless-lang": null,
-                    "x-stainless-os": null,
-                    "x-stainless-package-version": null,
-                    "x-stainless-retry-count": null,
-                    "x-stainless-runtime": null,
-                    "x-stainless-runtime-version": null,
-                    "x-stainless-timeout": null,
-                },
-                dangerouslyAllowBrowser: true,
-            });
+        const baseUrl = (customBaseUrl || fireworksBaseUrl).replace(/\/$/, "");
 
         const requestBody: OpenAI.ChatCompletionCreateParamsStreaming = {
-                model: modelName,
-                messages: [
-                    ...(modelConfig.systemPrompt
-                        ? [
-                              {
-                                  role: "system" as const,
-                                  content: modelConfig.systemPrompt,
-                              },
-                          ]
-                        : []),
-                    ...messages,
-                ],
-                stream: true,
-                ...(tools && tools.length > 0
-                    ? {
-                          tools: OpenAICompletionsAPIUtils.convertToolDefinitions(
-                              tools,
-                          ),
-                          tool_choice: "auto" as const,
-                      }
-                    : {}),
-            };
+            model: modelName,
+            messages: [
+                ...(modelConfig.systemPrompt
+                    ? [
+                          {
+                              role: "system" as const,
+                              content: modelConfig.systemPrompt,
+                          },
+                      ]
+                    : []),
+                ...messages,
+            ],
+            stream: true,
+            ...(tools && tools.length > 0
+                ? {
+                      tools: OpenAICompletionsAPIUtils.convertToolDefinitions(
+                          tools,
+                      ),
+                      tool_choice: "auto" as const,
+                  }
+                : {}),
+        };
 
         try {
-            let stream: AsyncIterable<OpenAI.ChatCompletionChunk>;
-            try {
-                stream = await createClient(
-                    customBaseUrl || fireworksBaseUrl,
-                ).chat.completions.create(requestBody);
-            } catch (firstError) {
-                // If user configured a custom base URL and that path fails with
-                // a connection-level issue, retry directly against Fireworks.
-                if (
-                    customBaseUrl &&
-                    isConnectionLevelError(firstError) &&
-                    customBaseUrl !== fireworksBaseUrl
-                ) {
-                    console.warn(
-                        "[ProviderFireworks] custom base URL failed; retrying with default Fireworks endpoint",
-                        customBaseUrl,
-                    );
-                    stream = await createClient(
-                        fireworksBaseUrl,
-                    ).chat.completions.create(requestBody);
-                } else {
-                    throw firstError;
-                }
-            }
-
             const chunks: OpenAI.ChatCompletionChunk[] = [];
+            const stream = await createFireworksStream(
+                `${baseUrl}/chat/completions`,
+                apiKeys.fireworks!,
+                requestBody,
+                additionalHeaders,
+            );
 
             for await (const chunk of stream) {
                 chunks.push(chunk);
@@ -158,19 +122,103 @@ export class ProviderFireworks implements IProvider {
     }
 }
 
-function isConnectionLevelError(error: unknown): boolean {
-    if (!error || typeof error !== "object") {
-        return false;
+async function* createFireworksStream(
+    url: string,
+    apiKey: string,
+    requestBody: OpenAI.ChatCompletionCreateParamsStreaming,
+    additionalHeaders?: Record<string, string>,
+): AsyncGenerator<OpenAI.ChatCompletionChunk> {
+    // Use direct fetch instead of the OpenAI SDK. The SDK adds browser headers
+    // that Fireworks does not allow in CORS preflight requests.
+    const response = await fetch(url, {
+        method: "POST",
+        headers: {
+            ...(additionalHeaders ?? {}),
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+        throw new Error(
+            await parseFireworksResponseError(response.status, response),
+        );
     }
-    const e = error as { message?: string; status?: number };
-    const msg = (e.message || "").toLowerCase();
-    return (
-        e.status === undefined &&
-        (msg.includes("connection error") ||
-            msg.includes("network error") ||
-            msg.includes("fetch failed") ||
-            msg.includes("timeout"))
-    );
+
+    if (!response.body) {
+        throw new Error("Fireworks API error: response body is empty");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                break;
+            }
+
+            buffer += decoder.decode(value, { stream: true });
+            const events = buffer.split(/\r?\n\r?\n/);
+            buffer = events.pop() ?? "";
+
+            for (const event of events) {
+                const chunk = parseSseEvent(event);
+                if (chunk) {
+                    yield chunk;
+                }
+            }
+        }
+
+        buffer += decoder.decode();
+        const finalChunk = parseSseEvent(buffer);
+        if (finalChunk) {
+            yield finalChunk;
+        }
+    } finally {
+        reader.releaseLock();
+    }
+}
+
+function parseSseEvent(event: string): OpenAI.ChatCompletionChunk | undefined {
+    const data = event
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice("data:".length).trim())
+        .join("\n");
+
+    if (!data || data === "[DONE]") {
+        return undefined;
+    }
+
+    return JSON5.parse(data) as OpenAI.ChatCompletionChunk;
+}
+
+async function parseFireworksResponseError(
+    status: number,
+    response: Response,
+): Promise<string> {
+    const body = await response.text();
+
+    try {
+        const data = JSON5.parse(body) as ProviderError;
+        if (data?.error?.message) {
+            const code = data.error.code ? ` (${data.error.code})` : "";
+            return `Fireworks API error${code}: ${data.error.message}`;
+        }
+        if (data?.message) {
+            return `Fireworks API error (${status}): ${data.message}`;
+        }
+    } catch {
+        // Fall through to the generic response body below.
+    }
+
+    return body
+        ? `Fireworks API error (${status}): ${body}`
+        : `Fireworks API error (${status})`;
 }
 
 function parseFireworksError(error: unknown): string {
