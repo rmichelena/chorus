@@ -2582,5 +2582,31 @@ You have full access to bash commands on the user''''s computer. If you write a 
                 WHERE model_id LIKE 'fireworks::accounts/fireworks/models/%';
             "#,
         },
+        Migration {
+            version: 141,
+            description: "replace deprecated fireworks defaults with deepseek-v3p1",
+            kind: MigrationKind::Up,
+            sql: r#"
+                -- Remove deprecated Fireworks defaults that frequently return NOT_FOUND
+                DELETE FROM model_configs
+                WHERE model_id IN (
+                    'fireworks::accounts/fireworks/models/llama-v3p1-8b-instruct',
+                    'fireworks::accounts/fireworks/models/llama-v3p1-70b-instruct'
+                );
+
+                DELETE FROM models
+                WHERE id IN (
+                    'fireworks::accounts/fireworks/models/llama-v3p1-8b-instruct',
+                    'fireworks::accounts/fireworks/models/llama-v3p1-70b-instruct'
+                );
+
+                -- Add a valid Fireworks serverless text model default
+                INSERT OR REPLACE INTO models (id, display_name, is_enabled, supported_attachment_types) VALUES
+                    ('fireworks::accounts/fireworks/models/deepseek-v3p1', 'fireworks/deepseek-v3p1', 1, '["text", "webpage"]');
+
+                INSERT OR REPLACE INTO model_configs (author, id, model_id, display_name, system_prompt, is_default) VALUES
+                    ('system', 'fireworks::accounts/fireworks/models/deepseek-v3p1', 'fireworks::accounts/fireworks/models/deepseek-v3p1', 'fireworks/deepseek-v3p1', '', 0);
+            "#,
+        },
     ];
 }

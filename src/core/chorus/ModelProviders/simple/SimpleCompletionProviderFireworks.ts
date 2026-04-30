@@ -5,9 +5,9 @@ import {
     SimpleCompletionParams,
 } from "./ISimpleCompletionProvider";
 
-const DEFAULT_TITLE_MODEL = "accounts/fireworks/models/llama-v3p1-8b-instruct";
+const DEFAULT_TITLE_MODEL = "accounts/fireworks/models/deepseek-v3p1";
 const DEFAULT_SUMMARIZER_MODEL =
-    "accounts/fireworks/models/llama-v3p1-8b-instruct";
+    "accounts/fireworks/models/deepseek-v3p1";
 
 export class SimpleCompletionProviderFireworks
     implements ISimpleCompletionProvider
