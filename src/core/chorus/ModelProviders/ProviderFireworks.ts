@@ -51,6 +51,7 @@ export class ProviderFireworks implements IProvider {
 
         const fireworksBaseUrl = "https://api.fireworks.ai/inference/v1";
         const baseUrl = (customBaseUrl || fireworksBaseUrl).replace(/\/$/, "");
+        const defaultUrl = `${fireworksBaseUrl}/chat/completions`;
 
         const requestBody: OpenAI.ChatCompletionCreateParamsStreaming = {
             model: modelName,
@@ -78,18 +79,35 @@ export class ProviderFireworks implements IProvider {
 
         try {
             const chunks: OpenAI.ChatCompletionChunk[] = [];
-            const stream = await createFireworksStream(
-                `${baseUrl}/chat/completions`,
-                apiKeys.fireworks!,
-                requestBody,
-                additionalHeaders,
-            );
-
-            for await (const chunk of stream) {
-                chunks.push(chunk);
-                if (chunk.choices[0]?.delta?.content) {
-                    onChunk(chunk.choices[0].delta.content);
+            const streamUrl = `${baseUrl}/chat/completions`;
+            try {
+                await collectFireworksStream(
+                    streamUrl,
+                    apiKeys.fireworks!,
+                    requestBody,
+                    additionalHeaders,
+                    chunks,
+                    onChunk,
+                );
+            } catch (firstError) {
+                if (!customBaseUrl || streamUrl === defaultUrl) {
+                    throw firstError;
                 }
+
+                console.warn(
+                    "[ProviderFireworks] custom base URL failed; retrying with default Fireworks endpoint",
+                    customBaseUrl,
+                    firstError,
+                );
+                chunks.length = 0;
+                await collectFireworksStream(
+                    defaultUrl,
+                    apiKeys.fireworks!,
+                    requestBody,
+                    additionalHeaders,
+                    chunks,
+                    onChunk,
+                );
             }
 
             const usage = chunks[chunks.length - 1]?.usage;
@@ -118,6 +136,29 @@ export class ProviderFireworks implements IProvider {
             );
             const parsed = parseFireworksError(error);
             throw new Error(parsed);
+        }
+    }
+}
+
+async function collectFireworksStream(
+    url: string,
+    apiKey: string,
+    requestBody: OpenAI.ChatCompletionCreateParamsStreaming,
+    additionalHeaders: Record<string, string> | undefined,
+    chunks: OpenAI.ChatCompletionChunk[],
+    onChunk: (chunk: string) => void,
+): Promise<void> {
+    const stream = createFireworksStream(
+        url,
+        apiKey,
+        requestBody,
+        additionalHeaders,
+    );
+
+    for await (const chunk of stream) {
+        chunks.push(chunk);
+        if (chunk.choices[0]?.delta?.content) {
+            onChunk(chunk.choices[0].delta.content);
         }
     }
 }
