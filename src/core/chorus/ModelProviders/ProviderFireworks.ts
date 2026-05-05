@@ -51,7 +51,6 @@ export class ProviderFireworks implements IProvider {
 
         const fireworksBaseUrl = "https://api.fireworks.ai/inference/v1";
         const baseUrl = (customBaseUrl || fireworksBaseUrl).replace(/\/$/, "");
-        const defaultUrl = `${fireworksBaseUrl}/chat/completions`;
 
         const requestBody: OpenAI.ChatCompletionCreateParamsStreaming = {
             model: modelName,
@@ -80,35 +79,14 @@ export class ProviderFireworks implements IProvider {
         try {
             const chunks: OpenAI.ChatCompletionChunk[] = [];
             const streamUrl = `${baseUrl}/chat/completions`;
-            try {
-                await collectFireworksStream(
-                    streamUrl,
-                    apiKeys.fireworks!,
-                    requestBody,
-                    additionalHeaders,
-                    chunks,
-                    onChunk,
-                );
-            } catch (firstError) {
-                if (!customBaseUrl || streamUrl === defaultUrl) {
-                    throw firstError;
-                }
-
-                console.warn(
-                    "[ProviderFireworks] custom base URL failed; retrying with default Fireworks endpoint",
-                    customBaseUrl,
-                    firstError,
-                );
-                chunks.length = 0;
-                await collectFireworksStream(
-                    defaultUrl,
-                    apiKeys.fireworks!,
-                    requestBody,
-                    additionalHeaders,
-                    chunks,
-                    onChunk,
-                );
-            }
+            await collectFireworksStream(
+                streamUrl,
+                apiKeys.fireworks!,
+                requestBody,
+                additionalHeaders,
+                chunks,
+                onChunk,
+            );
 
             const usage = chunks[chunks.length - 1]?.usage;
             const toolCalls = OpenAICompletionsAPIUtils.convertToolCalls(

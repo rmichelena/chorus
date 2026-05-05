@@ -377,38 +377,49 @@ export async function downloadFireworksModels(
     db: Database,
     apiKey: string,
 ): Promise<number> {
-    const params = new URLSearchParams({
-        filter: "supports_serverless=true",
-        pageSize: "200",
-    });
-    const response = await fetch(
-        `https://api.fireworks.ai/v1/accounts/fireworks/models?${params.toString()}`,
-        {
-            headers: {
-                Authorization: `Bearer ${apiKey}`,
-            },
-        },
-    );
-    if (!response.ok) {
-        console.error("Failed to fetch Fireworks models", response.status);
-        return 0;
-    }
-
-    const payload = (await response.json()) as {
-        models?: {
-            name: string;
-            displayName?: string;
-            supportsImageInput?: boolean;
-        }[];
+    type FireworksModel = {
+        name: string;
+        displayName?: string;
+        supportsImageInput?: boolean;
     };
-    const fireworksModels = payload.models ?? [];
+
+    const allModels: FireworksModel[] = [];
+    let pageToken: string | undefined;
+
+    do {
+        const params = new URLSearchParams({
+            filter: "supports_serverless=true",
+            pageSize: "200",
+        });
+        if (pageToken) {
+            params.set("pageToken", pageToken);
+        }
+        const response = await fetch(
+            `https://api.fireworks.ai/v1/accounts/fireworks/models?${params.toString()}`,
+            {
+                headers: {
+                    Authorization: `Bearer ${apiKey}`,
+                },
+            },
+        );
+        if (!response.ok) {
+            console.error("Failed to fetch Fireworks models", response.status);
+            return 0;
+        }
+        const payload = (await response.json()) as {
+            models?: FireworksModel[];
+            nextPageToken?: string;
+        };
+        allModels.push(...(payload.models ?? []));
+        pageToken = payload.nextPageToken;
+    } while (pageToken);
 
     await db.execute(
         "UPDATE models SET is_enabled = 0 WHERE id LIKE 'fireworks::%'",
     );
 
     await Promise.all(
-        fireworksModels.map((model) =>
+        allModels.map((model) =>
             saveModelAndDefaultConfig(
                 db,
                 {
@@ -427,7 +438,7 @@ export async function downloadFireworksModels(
         ),
     );
 
-    return fireworksModels.length;
+    return allModels.length;
 }
 
 /**
