@@ -911,8 +911,8 @@ function ChatListItem({ chat, isActive }: { chat: Chat; isActive: boolean }) {
             e.preventDefault();
             e.stopPropagation();
             try {
-                await ExportAPI.exportChatAsJSON(chat.id);
-                toast.success("Chat exported as JSON");
+                const saved = await ExportAPI.exportChatAsJSON(chat.id);
+                if (saved) toast.success("Chat exported as JSON");
             } catch (error) {
                 toast.error("Failed to export chat");
                 console.error(error);
@@ -926,8 +926,8 @@ function ChatListItem({ chat, isActive }: { chat: Chat; isActive: boolean }) {
             e.preventDefault();
             e.stopPropagation();
             try {
-                await ExportAPI.exportChatAsMarkdown(chat.id);
-                toast.success("Chat exported as Markdown");
+                const saved = await ExportAPI.exportChatAsMarkdown(chat.id);
+                if (saved) toast.success("Chat exported as Markdown");
             } catch (error) {
                 toast.error("Failed to export chat");
                 console.error(error);

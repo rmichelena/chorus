@@ -39,11 +39,14 @@ async function fetchChatMessages(chatId: string): Promise<MessageRow[]> {
             m.model,
             CASE
                 WHEN m.model = 'user' THEN COALESCE(m.text, '')
-                ELSE COALESCE(NULLIF(m.text, ''), mp.content, '')
+                ELSE COALESCE(NULLIF(m.text, ''), (
+                    SELECT GROUP_CONCAT(mp.content, '')
+                    FROM message_parts mp
+                    WHERE mp.message_id = m.id AND mp.chat_id = m.chat_id
+                ), '')
             END as text,
             m.created_at
         FROM messages m
-        LEFT JOIN message_parts mp ON m.id = mp.message_id AND m.chat_id = mp.chat_id
         WHERE m.chat_id = ?
         ORDER BY m.created_at ASC`,
         [chatId],
@@ -124,40 +127,30 @@ function formatAsMarkdown(data: ExportData): string {
     return md;
 }
 
-export async function exportChatAsJSON(chatId: string): Promise<void> {
+export async function exportChatAsJSON(chatId: string): Promise<boolean> {
     const data = await fetchExportData(chatId);
     const jsonContent = formatAsJSON(data);
 
     const filePath = await save({
         defaultPath: `${data.title || "chat"}.json`,
-        filters: [
-            {
-                name: "JSON",
-                extensions: ["json"],
-            },
-        ],
+        filters: [{ name: "JSON", extensions: ["json"] }],
     });
 
-    if (filePath) {
-        await writeTextFile(filePath, jsonContent);
-    }
+    if (!filePath) return false;
+    await writeTextFile(filePath, jsonContent);
+    return true;
 }
 
-export async function exportChatAsMarkdown(chatId: string): Promise<void> {
+export async function exportChatAsMarkdown(chatId: string): Promise<boolean> {
     const data = await fetchExportData(chatId);
     const mdContent = formatAsMarkdown(data);
 
     const filePath = await save({
         defaultPath: `${data.title || "chat"}.md`,
-        filters: [
-            {
-                name: "Markdown",
-                extensions: ["md"],
-            },
-        ],
+        filters: [{ name: "Markdown", extensions: ["md"] }],
     });
 
-    if (filePath) {
-        await writeTextFile(filePath, mdContent);
-    }
+    if (!filePath) return false;
+    await writeTextFile(filePath, mdContent);
+    return true;
 }
