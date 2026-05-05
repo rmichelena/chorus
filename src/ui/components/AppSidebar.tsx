@@ -690,7 +690,7 @@ export function AppSidebarInner() {
                                     ) : (
                                         <EmptyChatState />
                                     )}
-                                    {defaultChats.length >
+                                    {unpinnedChats.length >
                                         NUM_DEFAULT_CHATS_TO_SHOW_BY_DEFAULT &&
                                         !showAllChats && (
                                             <SidebarMenuItem className="w-full">
@@ -932,34 +932,37 @@ function ChatListItem({ chat, isActive }: { chat: Chat; isActive: boolean }) {
         [chat.id, chat.pinned, togglePinChat],
     );
 
-    const handleExportJSON = useCallback(
-        async (e: React.MouseEvent) => {
+    const handleExport = useCallback(
+        async (
+            e: React.MouseEvent,
+            format: "JSON" | "Markdown",
+        ) => {
             e.preventDefault();
             e.stopPropagation();
             try {
-                const saved = await ExportAPI.exportChatAsJSON(chat.id);
-                if (saved) toast.success("Chat exported as JSON");
+                const saved =
+                    format === "JSON"
+                        ? await ExportAPI.exportChatAsJSON(chat.id)
+                        : await ExportAPI.exportChatAsMarkdown(chat.id);
+                if (saved) toast.success(`Chat exported as ${format}`);
             } catch (error) {
-                toast.error("Failed to export chat");
+                const detail =
+                    error instanceof Error ? error.message : String(error);
+                toast.error(`Failed to export chat: ${detail}`);
                 console.error(error);
             }
         },
         [chat.id],
     );
 
+    const handleExportJSON = useCallback(
+        (e: React.MouseEvent) => handleExport(e, "JSON"),
+        [handleExport],
+    );
+
     const handleExportMarkdown = useCallback(
-        async (e: React.MouseEvent) => {
-            e.preventDefault();
-            e.stopPropagation();
-            try {
-                const saved = await ExportAPI.exportChatAsMarkdown(chat.id);
-                if (saved) toast.success("Chat exported as Markdown");
-            } catch (error) {
-                toast.error("Failed to export chat");
-                console.error(error);
-            }
-        },
-        [chat.id],
+        (e: React.MouseEvent) => handleExport(e, "Markdown"),
+        [handleExport],
     );
 
     return (
@@ -1114,13 +1117,21 @@ const ChatListItemView = React.memo(
                         <div className="flex items-center gap-2 absolute right-3 z-10">
                             <Tooltip>
                                 <TooltipTrigger asChild>
-                                    <div onClick={onTogglePin}>
+                                    <button
+                                        type="button"
+                                        onClick={onTogglePin}
+                                        aria-label={
+                                            isPinned ? "Unpin chat" : "Pin chat"
+                                        }
+                                        aria-pressed={isPinned}
+                                        className="flex items-center justify-center"
+                                    >
                                         {isPinned ? (
                                             <PinOff className="h-[13px] w-[13px] opacity-100 transition-opacity text-muted-foreground hover:text-foreground" />
                                         ) : (
                                             <Pin className="h-[13px] w-[13px] opacity-0 group-hover/chat-button:opacity-100 transition-opacity text-muted-foreground hover:text-foreground" />
                                         )}
-                                    </div>
+                                    </button>
                                 </TooltipTrigger>
                                 <TooltipContent side="bottom">
                                     {isPinned ? "Unpin chat" : "Pin chat"}
@@ -1128,14 +1139,17 @@ const ChatListItemView = React.memo(
                             </Tooltip>
                             <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                    <div
+                                    <button
+                                        type="button"
+                                        aria-label="Export chat"
                                         onClick={(e) => {
                                             e.preventDefault();
                                             e.stopPropagation();
                                         }}
+                                        className="flex items-center justify-center"
                                     >
-                                        <Download className="h-[13px] w-[13px] opacity-0 group-hover/chat-button:opacity-100 transition-opacity text-muted-foreground hover:text-foreground cursor-pointer" />
-                                    </div>
+                                        <Download className="h-[13px] w-[13px] opacity-0 group-hover/chat-button:opacity-100 transition-opacity text-muted-foreground hover:text-foreground" />
+                                    </button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
                                     <DropdownMenuItem onClick={onExportJSON}>

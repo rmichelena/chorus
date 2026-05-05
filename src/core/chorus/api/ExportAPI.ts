@@ -53,7 +53,11 @@ async function fetchChatMessages(chatId: string): Promise<MessageRow[]> {
         WHERE m.chat_id = ?
           AND m.selected = 1
           AND (m.is_review = 0 OR m.is_review IS NULL)
-          AND m.block_type = ms.selected_block_type
+          AND (
+              ms.selected_block_type IS NULL
+              OR m.block_type IS NULL
+              OR m.block_type = ms.selected_block_type
+          )
         ORDER BY ms.level ASC, m.created_at ASC`,
         [chatId],
     );
@@ -103,6 +107,17 @@ async function fetchExportData(chatId: string): Promise<ExportData> {
     };
 }
 
+function sanitizeFilename(name: string): string {
+    // Strip path separators and characters illegal on Windows / problematic on macOS
+    const cleaned = name.replace(/[/\\:*?"<>|]/g, "_").trim();
+    return cleaned || "chat";
+}
+
+function escapeMarkdownContent(content: string): string {
+    // Escape lines that would collide with our turn separator ("---")
+    return content.replace(/^---$/gm, "\\---");
+}
+
 function formatAsJSON(data: ExportData): string {
     return JSON.stringify(data, null, 2);
 }
@@ -113,14 +128,12 @@ function formatAsMarkdown(data: ExportData): string {
     md += `---\n\n`;
 
     for (const turn of data.turns) {
-        // User message
         if (turn.user.content) {
-            md += `### You\n${turn.user.content}\n\n`;
+            md += `### You\n${escapeMarkdownContent(turn.user.content)}\n\n`;
         }
 
-        // AI responses
         for (const response of turn.responses) {
-            md += `### ${response.model}\n${response.content}\n\n`;
+            md += `### ${response.model}\n${escapeMarkdownContent(response.content)}\n\n`;
         }
 
         md += `---\n\n`;
@@ -129,30 +142,29 @@ function formatAsMarkdown(data: ExportData): string {
     return md;
 }
 
-export async function exportChatAsJSON(chatId: string): Promise<boolean> {
+async function exportChat(
+    chatId: string,
+    extension: "json" | "md",
+    formatName: string,
+    formatter: (data: ExportData) => string,
+): Promise<boolean> {
     const data = await fetchExportData(chatId);
-    const jsonContent = formatAsJSON(data);
+    const content = formatter(data);
 
     const filePath = await save({
-        defaultPath: `${data.title || "chat"}.json`,
-        filters: [{ name: "JSON", extensions: ["json"] }],
+        defaultPath: `${sanitizeFilename(data.title)}.${extension}`,
+        filters: [{ name: formatName, extensions: [extension] }],
     });
 
     if (!filePath) return false;
-    await writeTextFile(filePath, jsonContent);
+    await writeTextFile(filePath, content);
     return true;
 }
 
-export async function exportChatAsMarkdown(chatId: string): Promise<boolean> {
-    const data = await fetchExportData(chatId);
-    const mdContent = formatAsMarkdown(data);
+export function exportChatAsJSON(chatId: string): Promise<boolean> {
+    return exportChat(chatId, "json", "JSON", formatAsJSON);
+}
 
-    const filePath = await save({
-        defaultPath: `${data.title || "chat"}.md`,
-        filters: [{ name: "Markdown", extensions: ["md"] }],
-    });
-
-    if (!filePath) return false;
-    await writeTextFile(filePath, mdContent);
-    return true;
+export function exportChatAsMarkdown(chatId: string): Promise<boolean> {
+    return exportChat(chatId, "md", "Markdown", formatAsMarkdown);
 }

@@ -402,7 +402,6 @@ export function useRenameChat() {
 
 export function useTogglePinChat() {
     const queryClient = useQueryClient();
-    const cacheUpdateChat = useCacheUpdateChat();
 
     return useMutation({
         mutationKey: ["togglePinChat"] as const,
@@ -413,10 +412,7 @@ export function useTogglePinChat() {
             ]);
             return { chatId, pinned };
         },
-        onSuccess: async (_data, variables) => {
-            cacheUpdateChat(variables.chatId, (chat) => {
-                chat.pinned = variables.pinned;
-            });
+        onSuccess: async () => {
             await queryClient.invalidateQueries(chatQueries.list());
         },
     });
