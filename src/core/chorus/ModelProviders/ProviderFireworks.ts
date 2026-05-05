@@ -3,7 +3,6 @@ import { StreamResponseParams } from "../Models";
 import { IProvider } from "./IProvider";
 import { canProceedWithProvider } from "@core/utilities/ProxyUtils";
 import OpenAICompletionsAPIUtils from "@core/chorus/OpenAICompletionsAPIUtils";
-import JSON5 from "json5";
 
 interface ProviderError {
     message: string;
@@ -110,7 +109,6 @@ export class ProviderFireworks implements IProvider {
                 "Raw error from ProviderFireworks:",
                 error,
                 modelName,
-                messages,
             );
             const parsed = parseFireworksError(error);
             throw new Error(parsed);
@@ -213,7 +211,7 @@ function parseSseEvent(event: string): OpenAI.ChatCompletionChunk | undefined {
         return undefined;
     }
 
-    return JSON5.parse(data) as OpenAI.ChatCompletionChunk;
+    return JSON.parse(data) as OpenAI.ChatCompletionChunk;
 }
 
 async function parseFireworksResponseError(
@@ -223,7 +221,7 @@ async function parseFireworksResponseError(
     const body = await response.text();
 
     try {
-        const data = JSON5.parse(body) as ProviderError;
+        const data = JSON.parse(body) as ProviderError;
         if (data?.error?.message) {
             const code = data.error.code ? ` (${data.error.code})` : "";
             return `Fireworks API error${code}: ${data.error.message}`;
@@ -260,7 +258,7 @@ function parseFireworksError(error: unknown): string {
         try {
             const data =
                 typeof maybeError.response.data === "string"
-                    ? JSON5.parse(maybeError.response.data)
+                    ? JSON.parse(maybeError.response.data)
                     : (maybeError.response.data as ProviderError);
             if (data?.error?.message) {
                 const code = data.error.code ? ` (${data.error.code})` : "";
