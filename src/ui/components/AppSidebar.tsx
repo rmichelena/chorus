@@ -479,17 +479,25 @@ export function AppSidebarInner() {
             ),
         [chatsByProject, currentChatId],
     );
+    const pinnedChats = useMemo(
+        () => defaultChats.filter((c) => c.pinned),
+        [defaultChats],
+    );
+    const unpinnedChats = useMemo(
+        () => defaultChats.filter((c) => !c.pinned),
+        [defaultChats],
+    );
     const groupedChats = useMemo(
         () =>
             groupChatsByDate(
                 showAllChats
-                    ? defaultChats
-                    : defaultChats.slice(
+                    ? unpinnedChats
+                    : unpinnedChats.slice(
                           0,
                           NUM_DEFAULT_CHATS_TO_SHOW_BY_DEFAULT,
                       ),
             ),
-        [defaultChats, showAllChats],
+        [unpinnedChats, showAllChats],
     );
     const quickChats = useMemo(
         () =>
@@ -634,6 +642,24 @@ export function AppSidebarInner() {
                                 <div className="h-3" />
 
                                 <Droppable id="default">
+                                    {/* Pinned chats */}
+                                    {pinnedChats.length > 0 && (
+                                        <div className="pb-3">
+                                            <div className="px-3 mb-1 sidebar-label flex items-center gap-2 text-muted-foreground">
+                                                Pinned
+                                            </div>
+                                            {pinnedChats.map((chat) => (
+                                                <ChatListItem
+                                                    key={chat.id + "-sidebar"}
+                                                    chat={chat}
+                                                    isActive={
+                                                        currentChatId ===
+                                                        chat.id
+                                                    }
+                                                />
+                                            ))}
+                                        </div>
+                                    )}
                                     {/* Grouped chats */}
                                     {groupedChats.length > 0 ? (
                                         groupedChats.map(

@@ -51,6 +51,9 @@ async function fetchChatMessages(chatId: string): Promise<MessageRow[]> {
         FROM messages m
         JOIN message_sets ms ON m.message_set_id = ms.id
         WHERE m.chat_id = ?
+          AND m.selected = 1
+          AND (m.is_review = 0 OR m.is_review IS NULL)
+          AND m.block_type = ms.selected_block_type
         ORDER BY ms.level ASC, m.created_at ASC`,
         [chatId],
     );
