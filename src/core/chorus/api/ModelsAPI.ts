@@ -133,7 +133,14 @@ export async function fetchModelConfigs() {
                 db,
                 apiKeys.fireworks,
             );
-            await fireworksDownloadPromise;
+            try {
+                await fireworksDownloadPromise;
+            } catch (error) {
+                // Clear so the next call can retry instead of replaying a
+                // rejected promise for the rest of the session.
+                fireworksDownloadPromise = null;
+                throw error;
+            }
         }
     }
 
@@ -396,11 +403,14 @@ export function useRefreshModels() {
     return useMutation({
         mutationKey: ["refreshAllModels"] as const,
         mutationFn: async () => {
+            const apiKeys = await getApiKeys();
             await Promise.all([
                 refreshOpenRouterModels.mutateAsync(),
                 refreshOllamaModels.mutateAsync(),
                 refreshLMStudioModels.mutateAsync(),
-                refreshFireworksModels.mutateAsync(),
+                ...(apiKeys.fireworks
+                    ? [refreshFireworksModels.mutateAsync()]
+                    : []),
             ]);
         },
     });
