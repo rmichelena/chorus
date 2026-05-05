@@ -5,14 +5,13 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 
 interface MessageRow {
     message_id: string;
-    message_set_id: string;
+    turn_index: number;
     model: string;
     text: string;
     created_at: string;
 }
 
 interface Turn {
-    messageSetId: string;
     user: {
         content: string;
         timestamp: string;
@@ -35,41 +34,41 @@ async function fetchChatMessages(chatId: string): Promise<MessageRow[]> {
     const messages = await db.select<MessageRow[]>(
         `SELECT
             m.id as message_id,
-            m.message_set_id,
+            ms.level / 2 as turn_index,
             m.model,
             CASE
                 WHEN m.model = 'user' THEN COALESCE(m.text, '')
                 ELSE COALESCE(NULLIF(m.text, ''), (
-                    SELECT GROUP_CONCAT(mp.content, '')
-                    FROM message_parts mp
-                    WHERE mp.message_id = m.id AND mp.chat_id = m.chat_id
+                    SELECT GROUP_CONCAT(content, '')
+                    FROM (
+                        SELECT content FROM message_parts
+                        WHERE message_id = m.id AND chat_id = m.chat_id
+                        ORDER BY level
+                    )
                 ), '')
             END as text,
             m.created_at
         FROM messages m
+        JOIN message_sets ms ON m.message_set_id = ms.id
         WHERE m.chat_id = ?
-        ORDER BY m.created_at ASC`,
+        ORDER BY ms.level ASC, m.created_at ASC`,
         [chatId],
     );
     return messages;
 }
 
 function groupMessagesByTurns(messages: MessageRow[]): Turn[] {
-    const turnMap = new Map<string, Turn>();
+    const turnMap = new Map<number, Turn>();
 
     for (const message of messages) {
-        if (!turnMap.has(message.message_set_id)) {
-            turnMap.set(message.message_set_id, {
-                messageSetId: message.message_set_id,
-                user: {
-                    content: "",
-                    timestamp: "",
-                },
+        if (!turnMap.has(message.turn_index)) {
+            turnMap.set(message.turn_index, {
+                user: { content: "", timestamp: "" },
                 responses: [],
             });
         }
 
-        const turn = turnMap.get(message.message_set_id)!;
+        const turn = turnMap.get(message.turn_index)!;
 
         if (message.model === "user") {
             turn.user = {
