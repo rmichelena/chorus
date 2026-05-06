@@ -281,7 +281,7 @@ export function getProviderName(modelId: string): ProviderName {
     return providerName as ProviderName;
 }
 
-export function formatModelPathForDisplay(modelId: string): string {
+export function formatFireworksModelPathForDisplay(modelId: string): string {
     return modelId.replace(/^accounts\/fireworks\/models\//, "fireworks/");
 }
 
@@ -403,8 +403,15 @@ export async function downloadFireworksModels(
             },
         );
         if (!response.ok) {
-            console.error("Failed to fetch Fireworks models", response.status);
-            return 0;
+            const body = await response.text().catch(() => "");
+            console.error(
+                "Failed to fetch Fireworks models",
+                response.status,
+                body,
+            );
+            throw new Error(
+                `Failed to fetch Fireworks models (${response.status})`,
+            );
         }
         const payload = (await response.json()) as {
             models?: FireworksModel[];
@@ -424,7 +431,7 @@ export async function downloadFireworksModels(
                 db,
                 {
                     id: `fireworks::${model.name}`,
-                    displayName: formatModelPathForDisplay(
+                    displayName: formatFireworksModelPathForDisplay(
                         model.displayName || model.name,
                     ),
                     supportedAttachmentTypes: model.supportsImageInput
@@ -433,7 +440,7 @@ export async function downloadFireworksModels(
                     isEnabled: true,
                     isInternal: false,
                 },
-                formatModelPathForDisplay(model.displayName || model.name),
+                formatFireworksModelPathForDisplay(model.displayName || model.name),
             ),
         ),
     );

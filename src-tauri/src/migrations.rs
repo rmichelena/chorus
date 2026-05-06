@@ -2587,9 +2587,11 @@ You have full access to bash commands on the user''''s computer. If you write a 
             description: "replace deprecated fireworks defaults with deepseek-v3p1",
             kind: MigrationKind::Up,
             sql: r#"
-                -- Remove deprecated Fireworks defaults that frequently return NOT_FOUND
+                -- Remove deprecated Fireworks defaults that frequently return NOT_FOUND.
+                -- Scope to author='system' so user-created custom prompts that happened
+                -- to be based on these models are preserved.
                 DELETE FROM model_configs
-                WHERE model_id IN (
+                WHERE author = 'system' AND model_id IN (
                     'fireworks::accounts/fireworks/models/llama-v3p1-8b-instruct',
                     'fireworks::accounts/fireworks/models/llama-v3p1-70b-instruct'
                 );

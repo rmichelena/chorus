@@ -120,9 +120,14 @@ export async function fetchModelConfigs() {
             await openRouterDownloadPromise;
         } else {
             openRouterDownloadPromise = Models.downloadOpenRouterModels(db);
-            await openRouterDownloadPromise;
-            // Keep the promise stored so subsequent calls know it completed
-            // (we don't clear it to prevent re-downloads within the session)
+            try {
+                await openRouterDownloadPromise;
+            } catch (error) {
+                // Clear so the next call can retry instead of replaying a
+                // rejected promise for the rest of the session.
+                openRouterDownloadPromise = null;
+                throw error;
+            }
         }
     }
     if (apiKeys.fireworks) {

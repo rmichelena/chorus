@@ -1,8 +1,12 @@
-import OpenAI from "openai";
+import type OpenAI from "openai";
 import { StreamResponseParams } from "../Models";
 import { IProvider } from "./IProvider";
 import { canProceedWithProvider } from "@core/utilities/ProxyUtils";
 import OpenAICompletionsAPIUtils from "@core/chorus/OpenAICompletionsAPIUtils";
+import {
+    FIREWORKS_DEFAULT_BASE_URL,
+    streamFireworksChatCompletion,
+} from "@core/utilities/FireworksStream";
 
 interface ProviderError {
     message: string;
@@ -48,8 +52,10 @@ export class ProviderFireworks implements IProvider {
             },
         );
 
-        const fireworksBaseUrl = "https://api.fireworks.ai/inference/v1";
-        const baseUrl = (customBaseUrl || fireworksBaseUrl).replace(/\/$/, "");
+        const baseUrl = (customBaseUrl || FIREWORKS_DEFAULT_BASE_URL).replace(
+            /\/$/,
+            "",
+        );
 
         const requestBody: OpenAI.ChatCompletionCreateParamsStreaming = {
             model: modelName,
@@ -77,15 +83,19 @@ export class ProviderFireworks implements IProvider {
 
         try {
             const chunks: OpenAI.ChatCompletionChunk[] = [];
-            const streamUrl = `${baseUrl}/chat/completions`;
-            await collectFireworksStream(
-                streamUrl,
+            const stream = streamFireworksChatCompletion(
+                `${baseUrl}/chat/completions`,
                 apiKeys.fireworks!,
                 requestBody,
                 additionalHeaders,
-                chunks,
-                onChunk,
             );
+
+            for await (const chunk of stream) {
+                chunks.push(chunk);
+                if (chunk.choices[0]?.delta?.content) {
+                    onChunk(chunk.choices[0].delta.content);
+                }
+            }
 
             const usage = chunks[chunks.length - 1]?.usage;
             const toolCalls = OpenAICompletionsAPIUtils.convertToolCalls(
@@ -116,128 +126,6 @@ export class ProviderFireworks implements IProvider {
     }
 }
 
-async function collectFireworksStream(
-    url: string,
-    apiKey: string,
-    requestBody: OpenAI.ChatCompletionCreateParamsStreaming,
-    additionalHeaders: Record<string, string> | undefined,
-    chunks: OpenAI.ChatCompletionChunk[],
-    onChunk: (chunk: string) => void,
-): Promise<void> {
-    const stream = createFireworksStream(
-        url,
-        apiKey,
-        requestBody,
-        additionalHeaders,
-    );
-
-    for await (const chunk of stream) {
-        chunks.push(chunk);
-        if (chunk.choices[0]?.delta?.content) {
-            onChunk(chunk.choices[0].delta.content);
-        }
-    }
-}
-
-async function* createFireworksStream(
-    url: string,
-    apiKey: string,
-    requestBody: OpenAI.ChatCompletionCreateParamsStreaming,
-    additionalHeaders?: Record<string, string>,
-): AsyncGenerator<OpenAI.ChatCompletionChunk> {
-    // Use direct fetch instead of the OpenAI SDK. The SDK adds browser headers
-    // that Fireworks does not allow in CORS preflight requests.
-    const response = await fetch(url, {
-        method: "POST",
-        headers: {
-            ...(additionalHeaders ?? {}),
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestBody),
-    });
-
-    if (!response.ok) {
-        throw new Error(
-            await parseFireworksResponseError(response.status, response),
-        );
-    }
-
-    if (!response.body) {
-        throw new Error("Fireworks API error: response body is empty");
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    try {
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-                break;
-            }
-
-            buffer += decoder.decode(value, { stream: true });
-            const events = buffer.split(/\r?\n\r?\n/);
-            buffer = events.pop() ?? "";
-
-            for (const event of events) {
-                const chunk = parseSseEvent(event);
-                if (chunk) {
-                    yield chunk;
-                }
-            }
-        }
-
-        buffer += decoder.decode();
-        const finalChunk = parseSseEvent(buffer);
-        if (finalChunk) {
-            yield finalChunk;
-        }
-    } finally {
-        reader.releaseLock();
-    }
-}
-
-function parseSseEvent(event: string): OpenAI.ChatCompletionChunk | undefined {
-    const data = event
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice("data:".length).trim())
-        .join("\n");
-
-    if (!data || data === "[DONE]") {
-        return undefined;
-    }
-
-    return JSON.parse(data) as OpenAI.ChatCompletionChunk;
-}
-
-async function parseFireworksResponseError(
-    status: number,
-    response: Response,
-): Promise<string> {
-    const body = await response.text();
-
-    try {
-        const data = JSON.parse(body) as ProviderError;
-        if (data?.error?.message) {
-            const code = data.error.code ? ` (${data.error.code})` : "";
-            return `Fireworks API error${code}: ${data.error.message}`;
-        }
-        if (data?.message) {
-            return `Fireworks API error (${status}): ${data.message}`;
-        }
-    } catch {
-        // Fall through to the generic response body below.
-    }
-
-    return body
-        ? `Fireworks API error (${status}): ${body}`
-        : `Fireworks API error (${status})`;
-}
-
 function parseFireworksError(error: unknown): string {
     if (!error || typeof error !== "object") {
         return "Unknown Fireworks error";
@@ -258,7 +146,7 @@ function parseFireworksError(error: unknown): string {
         try {
             const data =
                 typeof maybeError.response.data === "string"
-                    ? JSON.parse(maybeError.response.data)
+                    ? (JSON.parse(maybeError.response.data) as ProviderError)
                     : (maybeError.response.data as ProviderError);
             if (data?.error?.message) {
                 const code = data.error.code ? ` (${data.error.code})` : "";

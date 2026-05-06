@@ -120,7 +120,7 @@ function getMessageModelName(
         return modelName;
     }
     if (provider === "fireworks" && modelId) {
-        return Models.formatModelPathForDisplay(modelId);
+        return Models.formatFireworksModelPathForDisplay(modelId);
     }
     // final fallback: unknown
     return "Unknown sender";
