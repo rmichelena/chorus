@@ -2596,7 +2596,13 @@ You have full access to bash commands on the user''''s computer. If you write a 
                     'fireworks::accounts/fireworks/models/llama-v3p1-70b-instruct'
                 );
 
-                DELETE FROM models
+                -- Disable rather than delete: any user-created config that
+                -- was preserved above still references these IDs, and deleting
+                -- the models row would orphan it. Refreshing from the API
+                -- will replace these via INSERT OR REPLACE if Fireworks ever
+                -- brings them back.
+                UPDATE models
+                SET is_enabled = 0
                 WHERE id IN (
                     'fireworks::accounts/fireworks/models/llama-v3p1-8b-instruct',
                     'fireworks::accounts/fireworks/models/llama-v3p1-70b-instruct'

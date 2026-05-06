@@ -8,15 +8,6 @@ import {
     streamFireworksChatCompletion,
 } from "@core/utilities/FireworksStream";
 
-interface ProviderError {
-    message: string;
-    error?: {
-        message?: string;
-        code?: string;
-        type?: string;
-    };
-}
-
 export class ProviderFireworks implements IProvider {
     async streamResponse({
         llmConversation,
@@ -120,42 +111,11 @@ export class ProviderFireworks implements IProvider {
                 error,
                 modelName,
             );
-            const parsed = parseFireworksError(error);
-            throw new Error(parsed);
+            // streamFireworksChatCompletion already throws Error with a
+            // formatted message; just rethrow.
+            throw error instanceof Error
+                ? error
+                : new Error("Unknown Fireworks error");
         }
     }
-}
-
-function parseFireworksError(error: unknown): string {
-    if (!error || typeof error !== "object") {
-        return "Unknown Fireworks error";
-    }
-
-    const maybeError = error as {
-        message?: string;
-        error?: { message?: string; code?: string; type?: string };
-        response?: { data?: unknown };
-    };
-
-    if (maybeError.error?.message) {
-        const code = maybeError.error.code ? ` (${maybeError.error.code})` : "";
-        return `Fireworks API error${code}: ${maybeError.error.message}`;
-    }
-
-    if (maybeError.response?.data) {
-        try {
-            const data =
-                typeof maybeError.response.data === "string"
-                    ? (JSON.parse(maybeError.response.data) as ProviderError)
-                    : (maybeError.response.data as ProviderError);
-            if (data?.error?.message) {
-                const code = data.error.code ? ` (${data.error.code})` : "";
-                return `Fireworks API error${code}: ${data.error.message}`;
-            }
-        } catch {
-            // Ignore parse failures and fall back to generic message
-        }
-    }
-
-    return maybeError.message || "Unknown Fireworks error";
 }

@@ -421,10 +421,10 @@ export async function downloadFireworksModels(
         pageToken = payload.nextPageToken;
     } while (pageToken);
 
-    await db.execute(
-        "UPDATE models SET is_enabled = 0 WHERE id LIKE 'fireworks::%'",
-    );
-
+    // Save (re-enabling) the freshly fetched models first, then disable any
+    // existing Fireworks rows that didn't appear in the latest list. Doing it
+    // in this order means a save failure leaves the prior enabled set intact
+    // instead of stranding all Fireworks models as disabled.
     await Promise.all(
         allModels.map((model) =>
             saveModelAndDefaultConfig(
@@ -444,6 +444,19 @@ export async function downloadFireworksModels(
             ),
         ),
     );
+
+    const newIds = allModels.map((m) => `fireworks::${m.name}`);
+    if (newIds.length > 0) {
+        const placeholders = newIds.map(() => "?").join(",");
+        await db.execute(
+            `UPDATE models SET is_enabled = 0 WHERE id LIKE 'fireworks::%' AND id NOT IN (${placeholders})`,
+            newIds,
+        );
+    } else {
+        await db.execute(
+            "UPDATE models SET is_enabled = 0 WHERE id LIKE 'fireworks::%'",
+        );
+    }
 
     return allModels.length;
 }
