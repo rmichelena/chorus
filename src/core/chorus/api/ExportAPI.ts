@@ -42,7 +42,7 @@ async function fetchChatMessages(chatId: string): Promise<MessageRow[]> {
             CASE
                 WHEN m.model = 'user' THEN COALESCE(m.text, '')
                 ELSE COALESCE(NULLIF(m.text, ''), (
-                    SELECT GROUP_CONCAT(content, '')
+                    SELECT GROUP_CONCAT(content, char(10) || char(10))
                     FROM (
                         SELECT content FROM message_parts
                         WHERE message_id = m.id AND chat_id = m.chat_id
@@ -129,10 +129,23 @@ async function fetchExportData(chatId: string): Promise<ExportData> {
     };
 }
 
+// Reserved names on Windows that would fail to open even with an extension.
+const WINDOWS_RESERVED = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+
 function sanitizeFilename(name: string): string {
-    // Strip path separators and characters illegal on Windows / problematic on macOS
-    const cleaned = name.replace(/[/\\:*?"<>|]/g, "_").trim();
-    return cleaned || "chat";
+    let cleaned = name
+        // Strip path separators and characters illegal on Windows / problematic on macOS
+        .replace(/[/\\:*?"<>|]/g, "_")
+        // Strip control characters (NUL, BEL, etc.) that some filesystems reject
+        .replace(/[\x00-\x1f\x7f]/g, "")
+        .trim()
+        // Trailing dots and spaces are stripped on Windows; trim them ourselves
+        .replace(/[. ]+$/g, "");
+    if (cleaned.length === 0) return "chat";
+    if (WINDOWS_RESERVED.test(cleaned)) cleaned = `_${cleaned}`;
+    // Cap at 200 chars to leave room for the extension within typical 255-char
+    // filename limits on macOS/ext4/NTFS.
+    return cleaned.slice(0, 200);
 }
 
 // Escape a string for use as plain text inside a markdown heading.
@@ -144,6 +157,8 @@ function escapeMarkdownInline(s: string): string {
 // Escape lines in message content that would otherwise alter the surrounding
 // document structure: horizontal rules (---, ___, ***), ATX headings (#..),
 // fenced code block markers (``` and ~~~), and our own turn separator.
+// Also escape leading `<` so renderers that allow raw HTML cannot interpret
+// content as an HTML tag.
 function escapeMarkdownContent(content: string): string {
     return content
         .split("\n")
@@ -151,6 +166,7 @@ function escapeMarkdownContent(content: string): string {
             if (/^(?:-{3,}|_{3,}|\*{3,})\s*$/.test(line)) return "\\" + line;
             if (/^#{1,6}(\s|$)/.test(line)) return "\\" + line;
             if (/^(?:```|~~~)/.test(line)) return "\\" + line;
+            if (/^</.test(line)) return "\\" + line;
             return line;
         })
         .join("\n");
@@ -162,7 +178,8 @@ function formatAsJSON(data: ExportData): string {
 
 function formatAsMarkdown(data: ExportData): string {
     let md = `# ${escapeMarkdownInline(data.title || "Untitled Chat")}\n`;
-    md += `Created: ${new Date(data.createdAt).toLocaleDateString()}\n\n`;
+    // ISO date so exports are deterministic across users/locales.
+    md += `Created: ${new Date(data.createdAt).toISOString().slice(0, 10)}\n\n`;
     md += `---\n\n`;
 
     for (const turn of data.turns) {

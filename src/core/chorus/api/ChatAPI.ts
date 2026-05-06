@@ -405,6 +405,7 @@ export function useRenameChat() {
 
 export function useTogglePinChat() {
     const queryClient = useQueryClient();
+    const cacheUpdateChat = useCacheUpdateChat();
 
     return useMutation({
         mutationKey: ["togglePinChat"] as const,
@@ -415,12 +416,35 @@ export function useTogglePinChat() {
             ]);
             return { chatId, pinned };
         },
-        onSuccess: async () => {
-            await queryClient.invalidateQueries(chatQueries.list());
+        onMutate: ({ chatId, pinned }) => {
+            // Optimistic update: flip the cached value immediately so the
+            // sidebar reflects the change before the DB round-trip. Capture
+            // the previous list so we can roll back on failure.
+            const previousList = queryClient.getQueryData<Chat[]>(
+                chatQueries.list().queryKey,
+            );
+            cacheUpdateChat(chatId, (chat) => {
+                chat.pinned = pinned;
+            });
+            return { previousList };
         },
-        onError: (error) => {
+        onError: (error, _variables, context) => {
+            if (context?.previousList) {
+                queryClient.setQueryData(
+                    chatQueries.list().queryKey,
+                    context.previousList,
+                );
+            }
             toast.error("Failed to update pin status");
             console.error(error);
+        },
+        onSettled: async (_data, _error, variables) => {
+            await Promise.all([
+                queryClient.invalidateQueries(chatQueries.list()),
+                queryClient.invalidateQueries(
+                    chatQueries.detail(variables.chatId),
+                ),
+            ]);
         },
     });
 }
