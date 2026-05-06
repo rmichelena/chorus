@@ -74,6 +74,7 @@ type ModelConfigDBRow = {
 // Track whether we've attempted to refresh OpenRouter models within
 // the current session, and store the promise if a download is in progress.
 let openRouterDownloadPromise: Promise<number> | null = null;
+let fireworksDownloadPromise: Promise<number> | null = null;
 
 function readModel(row: ModelDBRow): Models.Model {
     return {
@@ -119,9 +120,32 @@ export async function fetchModelConfigs() {
             await openRouterDownloadPromise;
         } else {
             openRouterDownloadPromise = Models.downloadOpenRouterModels(db);
-            await openRouterDownloadPromise;
-            // Keep the promise stored so subsequent calls know it completed
-            // (we don't clear it to prevent re-downloads within the session)
+            try {
+                await openRouterDownloadPromise;
+            } catch (error) {
+                // Clear so the next call can retry instead of replaying a
+                // rejected promise for the rest of the session.
+                openRouterDownloadPromise = null;
+                throw error;
+            }
+        }
+    }
+    if (apiKeys.fireworks) {
+        if (fireworksDownloadPromise) {
+            await fireworksDownloadPromise;
+        } else {
+            fireworksDownloadPromise = Models.downloadFireworksModels(
+                db,
+                apiKeys.fireworks,
+            );
+            try {
+                await fireworksDownloadPromise;
+            } catch (error) {
+                // Clear so the next call can retry instead of replaying a
+                // rejected promise for the rest of the session.
+                fireworksDownloadPromise = null;
+                throw error;
+            }
         }
     }
 
@@ -340,6 +364,27 @@ export function useRefreshOllamaModels() {
     });
 }
 
+export function useRefreshFireworksModels() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationKey: ["refreshFireworksModels"] as const,
+        mutationFn: async () => {
+            const apiKeys = await getApiKeys();
+            if (!apiKeys.fireworks) {
+                throw new Error(
+                    "Please add your Fireworks API key in Settings.",
+                );
+            }
+            await Models.downloadFireworksModels(db, apiKeys.fireworks);
+        },
+        onSuccess: async () => {
+            await queryClient.invalidateQueries(
+                modelConfigQueries.listConfigs(),
+            );
+        },
+    });
+}
+
 export function useRefreshLMStudioModels() {
     const queryClient = useQueryClient();
     return useMutation({
@@ -359,13 +404,18 @@ export function useRefreshModels() {
     const refreshOpenRouterModels = useRefreshOpenRouterModels();
     const refreshOllamaModels = useRefreshOllamaModels();
     const refreshLMStudioModels = useRefreshLMStudioModels();
+    const refreshFireworksModels = useRefreshFireworksModels();
     return useMutation({
         mutationKey: ["refreshAllModels"] as const,
         mutationFn: async () => {
+            const apiKeys = await getApiKeys();
             await Promise.all([
                 refreshOpenRouterModels.mutateAsync(),
                 refreshOllamaModels.mutateAsync(),
                 refreshLMStudioModels.mutateAsync(),
+                ...(apiKeys.fireworks
+                    ? [refreshFireworksModels.mutateAsync()]
+                    : []),
             ]);
         },
     });

@@ -57,6 +57,12 @@ export default function ApiKeysForm({
             url: "https://console.x.ai/settings/keys",
         },
         {
+            id: "fireworks",
+            name: "Fireworks",
+            placeholder: "fw_...",
+            url: "https://fireworks.ai/account/api-keys",
+        },
+        {
             id: "firecrawl",
             name: "Firecrawl",
             placeholder: "fc-...",

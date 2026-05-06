@@ -17,6 +17,7 @@ import { ollamaClient } from "./OllamaClient";
 import { ProviderOllama } from "./ModelProviders/ProviderOllama";
 import { ProviderLMStudio } from "./ModelProviders/ProviderLMStudio";
 import { ProviderGrok } from "./ModelProviders/ProviderGrok";
+import { ProviderFireworks } from "./ModelProviders/ProviderFireworks";
 import posthog from "posthog-js";
 import { UserTool, UserToolCall, UserToolResult } from "./Toolsets";
 import { Attachment } from "./api/AttachmentsAPI";
@@ -157,6 +158,7 @@ export type ApiKeys = {
     openrouter?: string;
     google?: string;
     grok?: string;
+    fireworks?: string;
 };
 
 export type Model = {
@@ -242,6 +244,7 @@ export type ProviderName =
     | "ollama"
     | "lmstudio"
     | "grok"
+    | "fireworks"
     | "meta";
 
 /**
@@ -278,6 +281,10 @@ export function getProviderName(modelId: string): ProviderName {
     return providerName as ProviderName;
 }
 
+export function formatFireworksModelPathForDisplay(modelId: string): string {
+    return modelId.replace(/^accounts\/fireworks\/models\//, "fireworks/");
+}
+
 function getProvider(providerName: string): IProvider {
     switch (providerName) {
         case "openai":
@@ -296,6 +303,8 @@ function getProvider(providerName: string): IProvider {
             return new ProviderLMStudio();
         case "grok":
             return new ProviderGrok();
+        case "fireworks":
+            return new ProviderFireworks();
         default:
             throw new Error(`Unknown provider: ${providerName}`);
     }
@@ -359,6 +368,97 @@ export async function DEPRECATED_USE_HOOK_INSTEAD_downloadModels(
     await downloadOllamaModels(db);
     await downloadLMStudioModels(db);
     return 0;
+}
+
+/**
+ * Downloads models from Fireworks to refresh the database.
+ */
+export async function downloadFireworksModels(
+    db: Database,
+    apiKey: string,
+): Promise<number> {
+    type FireworksModel = {
+        name: string;
+        displayName?: string;
+        supportsImageInput?: boolean;
+    };
+
+    const allModels: FireworksModel[] = [];
+    let pageToken: string | undefined;
+
+    do {
+        const params = new URLSearchParams({
+            filter: "supports_serverless=true",
+            pageSize: "200",
+        });
+        if (pageToken) {
+            params.set("pageToken", pageToken);
+        }
+        const response = await fetch(
+            `https://api.fireworks.ai/v1/accounts/fireworks/models?${params.toString()}`,
+            {
+                headers: {
+                    Authorization: `Bearer ${apiKey}`,
+                },
+            },
+        );
+        if (!response.ok) {
+            const body = await response.text().catch(() => "");
+            console.error(
+                "Failed to fetch Fireworks models",
+                response.status,
+                body,
+            );
+            throw new Error(
+                `Failed to fetch Fireworks models (${response.status})`,
+            );
+        }
+        const payload = (await response.json()) as {
+            models?: FireworksModel[];
+            nextPageToken?: string;
+        };
+        allModels.push(...(payload.models ?? []));
+        pageToken = payload.nextPageToken;
+    } while (pageToken);
+
+    // Save (re-enabling) the freshly fetched models first, then disable any
+    // existing Fireworks rows that didn't appear in the latest list. Doing it
+    // in this order means a save failure leaves the prior enabled set intact
+    // instead of stranding all Fireworks models as disabled.
+    await Promise.all(
+        allModels.map((model) =>
+            saveModelAndDefaultConfig(
+                db,
+                {
+                    id: `fireworks::${model.name}`,
+                    displayName: formatFireworksModelPathForDisplay(
+                        model.displayName || model.name,
+                    ),
+                    supportedAttachmentTypes: model.supportsImageInput
+                        ? ["text", "webpage", "image"]
+                        : ["text", "webpage"],
+                    isEnabled: true,
+                    isInternal: false,
+                },
+                formatFireworksModelPathForDisplay(model.displayName || model.name),
+            ),
+        ),
+    );
+
+    const newIds = allModels.map((m) => `fireworks::${m.name}`);
+    if (newIds.length > 0) {
+        const placeholders = newIds.map(() => "?").join(",");
+        await db.execute(
+            `UPDATE models SET is_enabled = 0 WHERE id LIKE 'fireworks::%' AND id NOT IN (${placeholders})`,
+            newIds,
+        );
+    } else {
+        await db.execute(
+            "UPDATE models SET is_enabled = 0 WHERE id LIKE 'fireworks::%'",
+        );
+    }
+
+    return allModels.length;
 }
 
 /**
@@ -613,6 +713,7 @@ const CONTEXT_LIMIT_PATTERNS: Record<ProviderName, string> = {
     lmstudio: "context window", // best guess
     perplexity: "context window", // best guess
     ollama: "context window", // best guess
+    fireworks: "context window", // best guess
 };
 
 /**

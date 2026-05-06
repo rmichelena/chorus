@@ -19,7 +19,13 @@ import * as ModelsAPI from "@core/chorus/api/ModelsAPI";
 import { useShortcut } from "@ui/hooks/useShortcut";
 
 // providers that support system prompts
-const CUSTOM_PROMPT_PROVIDERS = ["anthropic", "openai", "google", "perplexity"];
+const CUSTOM_PROMPT_PROVIDERS = [
+    "anthropic",
+    "openai",
+    "google",
+    "perplexity",
+    "fireworks",
+];
 
 interface NewModelFormData {
     name: string;
