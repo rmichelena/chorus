@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { produce } from "immer";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { db } from "../DB";
 import { getVersion } from "@tauri-apps/api/app";
 import { usePostHog } from "posthog-js/react";
@@ -141,10 +142,12 @@ export function useCacheUpdateChat() {
                     // NOTE: We don't always need to sort, if this becomes expensive we could gate
                     // this behind a flag
                     draft.sort((a, b) => {
-                        // Sort pinned chats first, then by updatedAt
-                        if (a.pinned !== b.pinned) {
-                            return b.pinned ? 1 : -1;
-                        }
+                        // Pinned chats first (Number(true)=1, Number(false)=0,
+                        // so b.pinned - a.pinned puts pinned ones at the top),
+                        // then by updatedAt descending.
+                        const pinnedDiff =
+                            Number(b.pinned) - Number(a.pinned);
+                        if (pinnedDiff !== 0) return pinnedDiff;
                         return b.updatedAt.localeCompare(a.updatedAt);
                     });
                 }
@@ -414,6 +417,10 @@ export function useTogglePinChat() {
         },
         onSuccess: async () => {
             await queryClient.invalidateQueries(chatQueries.list());
+        },
+        onError: (error) => {
+            toast.error("Failed to update pin status");
+            console.error(error);
         },
     });
 }

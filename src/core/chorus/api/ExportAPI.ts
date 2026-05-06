@@ -30,9 +30,12 @@ interface ExportData {
     turns: Turn[];
 }
 
+// NOTE: the GROUP_CONCAT runs as a correlated subquery per non-user row.
+// Acceptable cost for a manual, user-triggered export — revisit if export
+// becomes batch/automatic.
 async function fetchChatMessages(chatId: string): Promise<MessageRow[]> {
-    const messages = await db.select<MessageRow[]>(
-        `SELECT
+    const baseQuery = (extraFilter: string) => `
+        SELECT
             m.id as message_id,
             ms.level / 2 as turn_index,
             m.model,
@@ -53,15 +56,29 @@ async function fetchChatMessages(chatId: string): Promise<MessageRow[]> {
         WHERE m.chat_id = ?
           AND m.selected = 1
           AND (m.is_review = 0 OR m.is_review IS NULL)
-          AND (
-              ms.selected_block_type IS NULL
-              OR m.block_type IS NULL
-              OR m.block_type = ms.selected_block_type
-          )
-        ORDER BY ms.level ASC, m.created_at ASC`,
+          ${extraFilter}
+        ORDER BY ms.level ASC, m.created_at ASC`;
+
+    const strict = await db.select<MessageRow[]>(
+        baseQuery(`AND (
+            ms.selected_block_type IS NULL
+            OR m.block_type IS NULL
+            OR m.block_type = ms.selected_block_type
+        )`),
         [chatId],
     );
-    return messages;
+    if (strict.length > 0) return strict;
+
+    // Fallback: older chats may have selected_block_type values that don't
+    // match any message's block_type. Drop the block_type filter so the
+    // export isn't silently empty.
+    const relaxed = await db.select<MessageRow[]>(baseQuery(""), [chatId]);
+    if (relaxed.length > 0) {
+        console.warn(
+            `Export: block_type filter excluded all messages for chat ${chatId}; falling back to relaxed query`,
+        );
+    }
+    return relaxed;
 }
 
 function groupMessagesByTurns(messages: MessageRow[]): Turn[] {
@@ -78,6 +95,11 @@ function groupMessagesByTurns(messages: MessageRow[]): Turn[] {
         const turn = turnMap.get(message.turn_index)!;
 
         if (message.model === "user") {
+            if (turn.user.content) {
+                console.warn(
+                    `Export: multiple user messages for turn ${message.turn_index}; keeping the latest`,
+                );
+            }
             turn.user = {
                 content: message.text,
                 timestamp: message.created_at,
@@ -113,9 +135,25 @@ function sanitizeFilename(name: string): string {
     return cleaned || "chat";
 }
 
+// Escape a string for use as plain text inside a markdown heading.
+// Strips markdown-active leading characters (#, line breaks).
+function escapeMarkdownInline(s: string): string {
+    return s.replace(/[\r\n]+/g, " ").replace(/^#+/, (m) => "\\" + m);
+}
+
+// Escape lines in message content that would otherwise alter the surrounding
+// document structure: horizontal rules (---, ___, ***), ATX headings (#..),
+// fenced code block markers (``` and ~~~), and our own turn separator.
 function escapeMarkdownContent(content: string): string {
-    // Escape lines that would collide with our turn separator ("---")
-    return content.replace(/^---$/gm, "\\---");
+    return content
+        .split("\n")
+        .map((line) => {
+            if (/^(?:-{3,}|_{3,}|\*{3,})\s*$/.test(line)) return "\\" + line;
+            if (/^#{1,6}(\s|$)/.test(line)) return "\\" + line;
+            if (/^(?:```|~~~)/.test(line)) return "\\" + line;
+            return line;
+        })
+        .join("\n");
 }
 
 function formatAsJSON(data: ExportData): string {
@@ -123,7 +161,7 @@ function formatAsJSON(data: ExportData): string {
 }
 
 function formatAsMarkdown(data: ExportData): string {
-    let md = `# ${data.title}\n`;
+    let md = `# ${escapeMarkdownInline(data.title || "Untitled Chat")}\n`;
     md += `Created: ${new Date(data.createdAt).toLocaleDateString()}\n\n`;
     md += `---\n\n`;
 
@@ -133,7 +171,7 @@ function formatAsMarkdown(data: ExportData): string {
         }
 
         for (const response of turn.responses) {
-            md += `### ${response.model}\n${escapeMarkdownContent(response.content)}\n\n`;
+            md += `### ${escapeMarkdownInline(response.model)}\n${escapeMarkdownContent(response.content)}\n\n`;
         }
 
         md += `---\n\n`;
