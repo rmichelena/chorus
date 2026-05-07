@@ -123,7 +123,7 @@ async function fetchExportData(chatId: string): Promise<ExportData> {
 
     return {
         chatId: chat.id,
-        title: chat.title,
+        title: chat.title || "Untitled Chat",
         createdAt: chat.createdAt,
         turns,
     };

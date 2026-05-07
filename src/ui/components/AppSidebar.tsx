@@ -12,6 +12,7 @@ import {
     Pin,
     PinOff,
     Download,
+    GripVertical,
 } from "lucide-react";
 import {
     Sidebar,
@@ -73,6 +74,7 @@ import { SpeakerLoudIcon } from "@radix-ui/react-icons";
 import { emit } from "@tauri-apps/api/event";
 import { projectDisplayName } from "@ui/lib/utils";
 import { useQuery } from "@tanstack/react-query";
+import { useSidebar } from "@ui/hooks/useSidebar";
 import {
     DndContext,
     DragEndEvent,
@@ -216,7 +218,13 @@ function DevModeIndicator() {
     );
 }
 
-export function AppSidebar() {
+export function AppSidebar({
+    currentWidth = 256,
+    onWidthChange,
+}: {
+    currentWidth?: number;
+    onWidthChange?: (w: number) => void;
+}) {
     return (
         <>
             <Sidebar
@@ -227,7 +235,65 @@ export function AppSidebar() {
                 <DevModeIndicator />
                 <AppSidebarInner />
             </Sidebar>
+            <SidebarResizeHandle
+                currentWidth={currentWidth}
+                onWidthChange={onWidthChange}
+            />
         </>
+    );
+}
+
+function SidebarResizeHandle({
+    currentWidth,
+    onWidthChange,
+}: {
+    currentWidth: number;
+    onWidthChange?: (w: number) => void;
+}) {
+    const { state } = useSidebar();
+    const [isDragging, setIsDragging] = useState(false);
+
+    if (state !== "expanded") return null;
+
+    const handleMouseDown = (e: React.MouseEvent) => {
+        e.preventDefault();
+        const startX = e.clientX;
+        const startWidth = currentWidth;
+        setIsDragging(true);
+
+        const handleMouseMove = (ev: MouseEvent) => {
+            const newWidth = Math.max(
+                160,
+                Math.min(520, startWidth + (ev.clientX - startX)),
+            );
+            onWidthChange?.(newWidth);
+        };
+
+        const handleMouseUp = () => {
+            setIsDragging(false);
+            document.removeEventListener("mousemove", handleMouseMove);
+            document.removeEventListener("mouseup", handleMouseUp);
+        };
+
+        document.addEventListener("mousemove", handleMouseMove);
+        document.addEventListener("mouseup", handleMouseUp);
+    };
+
+    return (
+        <div
+            className={`group/resize-handle w-1 cursor-col-resize flex-shrink-0 z-20 flex items-center justify-center transition-colors ${
+                isDragging ? "bg-border" : "hover:bg-border/50"
+            }`}
+            onMouseDown={handleMouseDown}
+        >
+            <GripVertical
+                className={`h-4 w-3 text-muted-foreground/40 transition-opacity ${
+                    isDragging
+                        ? "opacity-100"
+                        : "opacity-0 group-hover/resize-handle:opacity-100"
+                }`}
+            />
+        </div>
     );
 }
 
@@ -1111,7 +1177,7 @@ const ChatListItemView = React.memo(
                         </div>
 
                         {/* Gradient overlay that appears when hovering */}
-                        <div className="absolute right-0 w-20 h-full opacity-0 group-hover/chat-button:opacity-100 transition-opacity bg-gradient-to-l from-sidebar-accent via-sidebar-accent to-transparent pointer-events-none" />
+                        <div className="absolute right-0 w-36 h-full opacity-0 group-hover/chat-button:opacity-100 transition-opacity bg-gradient-to-l from-sidebar-accent via-sidebar-accent to-transparent pointer-events-none" />
 
                         {/* chat actions */}
                         <div className="flex items-center gap-2 absolute right-3 z-10">
