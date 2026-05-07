@@ -1106,6 +1106,8 @@ const ChatListItemView = React.memo(
         chatCost,
         showCost,
     }: ChatListItemViewProps) => {
+        const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
+
         return (
             <div
                 key={chatId + "-sidebar"}
@@ -1177,7 +1179,7 @@ const ChatListItemView = React.memo(
                         </div>
 
                         {/* Gradient overlay that appears when hovering */}
-                        <div className="absolute right-0 w-36 h-full opacity-0 group-hover/chat-button:opacity-100 transition-opacity bg-gradient-to-l from-sidebar-accent via-sidebar-accent to-transparent pointer-events-none" />
+                        <div className="absolute right-0 w-36 h-full opacity-0 group-hover/chat-button:opacity-100 transition-opacity bg-gradient-to-l from-sidebar-accent from-[65%] to-transparent pointer-events-none" />
 
                         {/* chat actions */}
                         <div className="flex items-center gap-2 absolute right-3 z-10">
@@ -1203,25 +1205,52 @@ const ChatListItemView = React.memo(
                                     {isPinned ? "Unpin chat" : "Pin chat"}
                                 </TooltipContent>
                             </Tooltip>
-                            <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                    <button
-                                        type="button"
-                                        aria-label="Export chat"
+                            <DropdownMenu
+                                open={exportDropdownOpen}
+                                onOpenChange={setExportDropdownOpen}
+                            >
+                                <Tooltip
+                                    open={
+                                        exportDropdownOpen ? false : undefined
+                                    }
+                                >
+                                    <TooltipTrigger asChild>
+                                        <DropdownMenuTrigger asChild>
+                                            <button
+                                                type="button"
+                                                aria-label="Export chat"
+                                                onClick={(e) => {
+                                                    e.preventDefault();
+                                                    e.stopPropagation();
+                                                }}
+                                                className="flex items-center justify-center"
+                                            >
+                                                <Download className="h-[13px] w-[13px] opacity-0 group-hover/chat-button:opacity-100 transition-opacity text-muted-foreground hover:text-foreground" />
+                                            </button>
+                                        </DropdownMenuTrigger>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="bottom">
+                                        Export chat
+                                    </TooltipContent>
+                                </Tooltip>
+                                <DropdownMenuContent
+                                    align="end"
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    <DropdownMenuItem
                                         onClick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
+                                            setExportDropdownOpen(false);
+                                            onExportJSON(e);
                                         }}
-                                        className="flex items-center justify-center"
                                     >
-                                        <Download className="h-[13px] w-[13px] opacity-0 group-hover/chat-button:opacity-100 transition-opacity text-muted-foreground hover:text-foreground" />
-                                    </button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                                    <DropdownMenuItem onClick={onExportJSON}>
                                         Export as JSON
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={onExportMarkdown}>
+                                    <DropdownMenuItem
+                                        onClick={(e) => {
+                                            setExportDropdownOpen(false);
+                                            onExportMarkdown(e);
+                                        }}
+                                    >
                                         Export as Markdown
                                     </DropdownMenuItem>
                                 </DropdownMenuContent>
