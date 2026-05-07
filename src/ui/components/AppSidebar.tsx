@@ -1207,7 +1207,14 @@ const ChatListItemView = React.memo(
                             </Tooltip>
                             <DropdownMenu
                                 open={exportDropdownOpen}
-                                onOpenChange={setExportDropdownOpen}
+                                onOpenChange={(open) => {
+                                    setExportDropdownOpen(open);
+                                    if (!open) {
+                                        (
+                                            document.activeElement as HTMLElement
+                                        )?.blur();
+                                    }
+                                }}
                             >
                                 <Tooltip
                                     open={
