@@ -999,12 +999,7 @@ function ChatListItem({ chat, isActive }: { chat: Chat; isActive: boolean }) {
     );
 
     const handleExport = useCallback(
-        async (
-            e: React.MouseEvent,
-            format: "JSON" | "Markdown",
-        ) => {
-            e.preventDefault();
-            e.stopPropagation();
+        async (format: "JSON" | "Markdown") => {
             try {
                 const saved =
                     format === "JSON"
@@ -1022,12 +1017,12 @@ function ChatListItem({ chat, isActive }: { chat: Chat; isActive: boolean }) {
     );
 
     const handleExportJSON = useCallback(
-        (e: React.MouseEvent) => handleExport(e, "JSON"),
+        () => handleExport("JSON"),
         [handleExport],
     );
 
     const handleExportMarkdown = useCallback(
-        (e: React.MouseEvent) => handleExport(e, "Markdown"),
+        () => handleExport("Markdown"),
         [handleExport],
     );
 
@@ -1071,8 +1066,8 @@ type ChatListItemViewProps = {
     onStopEdit: () => void;
     onSubmitEdit: (newTitle: string) => Promise<void>;
     onTogglePin: (e: React.MouseEvent) => void;
-    onExportJSON: (e: React.MouseEvent) => void;
-    onExportMarkdown: (e: React.MouseEvent) => void;
+    onExportJSON: () => Promise<void>;
+    onExportMarkdown: () => Promise<void>;
     onDelete: () => void;
     onConfirmDelete: () => void;
     deleteIsPending: boolean;
@@ -1081,6 +1076,17 @@ type ChatListItemViewProps = {
     chatCost?: number;
     showCost: boolean;
 };
+
+const sidebarActionButtonClass =
+    "flex items-center justify-center outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0";
+
+function waitForNextPaint() {
+    return new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => resolve());
+        });
+    });
+}
 
 const ChatListItemView = React.memo(
     ({
@@ -1107,6 +1113,44 @@ const ChatListItemView = React.memo(
         showCost,
     }: ChatListItemViewProps) => {
         const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
+        const [exportTooltipOpen, setExportTooltipOpen] = useState(false);
+        const [suppressExportTooltip, setSuppressExportTooltip] =
+            useState(false);
+        const chatActionsRef = useRef<HTMLDivElement>(null);
+        const exportButtonRef = useRef<HTMLButtonElement>(null);
+
+        const clearSidebarActionFocus = useCallback(() => {
+            const activeElement = document.activeElement;
+            if (
+                activeElement instanceof HTMLElement &&
+                chatActionsRef.current?.contains(activeElement)
+            ) {
+                activeElement.blur();
+            }
+            exportButtonRef.current?.blur();
+        }, []);
+
+        const dismissExportChrome = useCallback(() => {
+            setExportDropdownOpen(false);
+            setExportTooltipOpen(false);
+            setSuppressExportTooltip(true);
+            clearSidebarActionFocus();
+        }, [clearSidebarActionFocus]);
+
+        const handleExportSelection = useCallback(
+            (runExport: () => Promise<void>) => {
+                dismissExportChrome();
+                void (async () => {
+                    await waitForNextPaint();
+                    try {
+                        await runExport();
+                    } finally {
+                        clearSidebarActionFocus();
+                    }
+                })();
+            },
+            [clearSidebarActionFocus, dismissExportChrome],
+        );
 
         return (
             <div
@@ -1182,7 +1226,10 @@ const ChatListItemView = React.memo(
                         <div className="absolute right-0 w-36 h-full opacity-0 group-hover/chat-button:opacity-100 transition-opacity bg-gradient-to-l from-sidebar-accent from-[65%] to-transparent pointer-events-none" />
 
                         {/* chat actions */}
-                        <div className="flex items-center gap-2 absolute right-3 z-10">
+                        <div
+                            ref={chatActionsRef}
+                            className="flex items-center gap-2 absolute right-3 z-10"
+                        >
                             <Tooltip>
                                 <TooltipTrigger asChild>
                                     <button
@@ -1192,7 +1239,7 @@ const ChatListItemView = React.memo(
                                             isPinned ? "Unpin chat" : "Pin chat"
                                         }
                                         aria-pressed={isPinned}
-                                        className="flex items-center justify-center"
+                                        className={sidebarActionButtonClass}
                                     >
                                         {isPinned ? (
                                             <PinOff className="h-[13px] w-[13px] opacity-100 transition-opacity text-muted-foreground hover:text-foreground" />
@@ -1210,27 +1257,51 @@ const ChatListItemView = React.memo(
                                 onOpenChange={(open) => {
                                     setExportDropdownOpen(open);
                                     if (!open) {
-                                        (
-                                            document.activeElement as HTMLElement
-                                        )?.blur();
+                                        setExportTooltipOpen(false);
+                                        clearSidebarActionFocus();
                                     }
                                 }}
                             >
                                 <Tooltip
                                     open={
-                                        exportDropdownOpen ? false : undefined
+                                        exportDropdownOpen ||
+                                        suppressExportTooltip
+                                            ? false
+                                            : exportTooltipOpen
                                     }
+                                    onOpenChange={(open) => {
+                                        if (
+                                            exportDropdownOpen ||
+                                            suppressExportTooltip
+                                        ) {
+                                            setExportTooltipOpen(false);
+                                            return;
+                                        }
+                                        setExportTooltipOpen(open);
+                                    }}
                                 >
                                     <TooltipTrigger asChild>
                                         <DropdownMenuTrigger asChild>
                                             <button
+                                                ref={exportButtonRef}
                                                 type="button"
                                                 aria-label="Export chat"
                                                 onClick={(e) => {
                                                     e.preventDefault();
                                                     e.stopPropagation();
                                                 }}
-                                                className="flex items-center justify-center"
+                                                onPointerDown={() => {
+                                                    setExportTooltipOpen(false);
+                                                }}
+                                                onPointerLeave={() => {
+                                                    setExportTooltipOpen(false);
+                                                    setSuppressExportTooltip(
+                                                        false,
+                                                    );
+                                                }}
+                                                className={
+                                                    sidebarActionButtonClass
+                                                }
                                             >
                                                 <Download className="h-[13px] w-[13px] opacity-0 group-hover/chat-button:opacity-100 transition-opacity text-muted-foreground hover:text-foreground" />
                                             </button>
@@ -1243,19 +1314,27 @@ const ChatListItemView = React.memo(
                                 <DropdownMenuContent
                                     align="end"
                                     onClick={(e) => e.stopPropagation()}
+                                    onCloseAutoFocus={(e) => {
+                                        e.preventDefault();
+                                        clearSidebarActionFocus();
+                                    }}
                                 >
                                     <DropdownMenuItem
-                                        onClick={(e) => {
-                                            setExportDropdownOpen(false);
-                                            onExportJSON(e);
+                                        onSelect={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            handleExportSelection(onExportJSON);
                                         }}
                                     >
                                         Export as JSON
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
-                                        onClick={(e) => {
-                                            setExportDropdownOpen(false);
-                                            onExportMarkdown(e);
+                                        onSelect={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            handleExportSelection(
+                                                onExportMarkdown,
+                                            );
                                         }}
                                     >
                                         Export as Markdown
