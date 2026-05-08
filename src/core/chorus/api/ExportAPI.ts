@@ -1,131 +1,303 @@
-import { db } from "../DB";
 import { fetchChat } from "./ChatAPI";
+import { fetchMessage, fetchMessageSets } from "./MessageAPI";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
+import type { Message, MessagePart, MessageSetDetail } from "../ChatState";
 
-interface MessageRow {
-    message_id: string;
-    turn_index: number;
+interface ExportMessage {
+    id: string;
     model: string;
-    text: string;
-    created_at: string;
+    content: string;
+    timestamp: string;
+    replies?: Turn[];
 }
 
 interface Turn {
-    user: {
-        content: string;
-        timestamp: string;
-    };
-    responses: Array<{
-        model: string;
-        content: string;
-        timestamp: string;
-    }>;
+    level: number;
+    user?: ExportMessage;
+    responses: ExportMessage[];
 }
 
 interface ExportData {
+    exportType: "chat" | "message-thread";
     chatId: string;
     title: string;
     createdAt: string;
+    exportedAt: string;
+    sourceMessageId?: string;
+    sourceModel?: string;
     turns: Turn[];
 }
 
-// NOTE: the GROUP_CONCAT runs as a correlated subquery per non-user row.
-// Acceptable cost for a manual, user-triggered export — revisit if export
-// becomes batch/automatic.
-async function fetchChatMessages(chatId: string): Promise<MessageRow[]> {
-    const baseQuery = (extraFilter: string) => `
-        SELECT
-            m.id as message_id,
-            ms.level / 2 as turn_index,
-            m.model,
-            CASE
-                WHEN m.model = 'user' THEN COALESCE(m.text, '')
-                ELSE COALESCE(NULLIF(m.text, ''), (
-                    SELECT GROUP_CONCAT(content, char(10) || char(10))
-                    FROM (
-                        SELECT content FROM message_parts
-                        WHERE message_id = m.id AND chat_id = m.chat_id
-                        ORDER BY level
-                    )
-                ), '')
-            END as text,
-            m.created_at
-        FROM messages m
-        JOIN message_sets ms ON m.message_set_id = ms.id
-        WHERE m.chat_id = ?
-          AND m.selected = 1
-          AND (m.is_review = 0 OR m.is_review IS NULL)
-          ${extraFilter}
-        ORDER BY ms.level ASC, m.created_at ASC`;
+function formatToolUse(part: MessagePart): string[] {
+    const lines: string[] = [];
 
-    const strict = await db.select<MessageRow[]>(
-        baseQuery(`AND (
-            ms.selected_block_type IS NULL
-            OR m.block_type IS NULL
-            OR m.block_type = ms.selected_block_type
-        )`),
-        [chatId],
-    );
-    if (strict.length > 0) return strict;
+    for (const toolCall of part.toolCalls ?? []) {
+        lines.push(`(tool use: ${toolCall.namespacedToolName})`);
+    }
 
-    // Fallback: older chats may have selected_block_type values that don't
-    // match any message's block_type. Drop the block_type filter so the
-    // export isn't silently empty.
-    const relaxed = await db.select<MessageRow[]>(baseQuery(""), [chatId]);
-    if (relaxed.length > 0) {
-        console.warn(
-            `Export: block_type filter excluded all messages for chat ${chatId}; falling back to relaxed query`,
+    for (const toolResult of part.toolResults ?? []) {
+        const toolName = toolResult.namespacedToolName
+            ? `: ${toolResult.namespacedToolName}`
+            : "";
+        lines.push(`(tool result${toolName})`);
+    }
+
+    return lines;
+}
+
+function formatMessagePart(part: MessagePart): string {
+    return [part.content.trim(), ...formatToolUse(part)]
+        .filter(Boolean)
+        .join("\n");
+}
+
+function messageContent(message: Message): string {
+    const partsContent = message.parts
+        .slice()
+        .sort((a, b) => a.level - b.level)
+        .map(formatMessagePart)
+        .filter(Boolean)
+        .join("\n\n");
+    return partsContent || message.text || "";
+}
+
+function toExportMessage(message: Message): ExportMessage {
+    return {
+        id: message.id,
+        model: message.model,
+        content: messageContent(message),
+        timestamp: "",
+    };
+}
+
+function exportableResponses(
+    messageSet: MessageSetDetail,
+    responseMode: "all" | "selected",
+): Message[] {
+    const toolsMessages = messageSet.toolsBlock.chatMessages;
+    if (toolsMessages.length > 0) {
+        return toolsMessages
+            .filter((message) =>
+                responseMode === "selected" ? message.selected : true,
+            )
+            .sort((a, b) => (a.level ?? 0) - (b.level ?? 0));
+    }
+
+    const legacyMessages = [
+        messageSet.chatBlock.message,
+        ...messageSet.compareBlock.messages,
+        messageSet.compareBlock.synthesis,
+        ...messageSet.brainstormBlock.ideaMessages,
+    ].filter((message): message is Message => Boolean(message));
+
+    return legacyMessages
+        .filter((message) =>
+            responseMode === "selected" ? message.selected : true,
+        )
+        .sort(
+            (a, b) =>
+                (a.level ?? 0) - (b.level ?? 0) ||
+                a.model.localeCompare(b.model),
         );
-    }
-    return relaxed;
 }
 
-function groupMessagesByTurns(messages: MessageRow[]): Turn[] {
-    const turnMap = new Map<number, Turn>();
+function messagesInSet(messageSet: MessageSetDetail): Message[] {
+    return [
+        messageSet.userBlock.message,
+        ...messageSet.toolsBlock.chatMessages,
+        messageSet.chatBlock.message,
+        ...messageSet.chatBlock.reviews,
+        ...messageSet.compareBlock.messages,
+        messageSet.compareBlock.synthesis,
+        ...messageSet.brainstormBlock.ideaMessages,
+    ].filter((message): message is Message => Boolean(message));
+}
 
-    for (const message of messages) {
-        if (!turnMap.has(message.turn_index)) {
-            turnMap.set(message.turn_index, {
-                user: { content: "", timestamp: "" },
+function hasNonCopiedMessages(messageSet: MessageSetDetail): boolean {
+    return messagesInSet(messageSet).some((message) => !message.branchedFromId);
+}
+
+async function attachReplies(
+    response: ExportMessage,
+    source: Message,
+): Promise<ExportMessage> {
+    if (!source.replyChatId) return response;
+
+    const replies = await buildReplyTurns(source.replyChatId);
+    return replies.length > 0 ? { ...response, replies } : response;
+}
+
+async function buildTurnsFromMessageSets(
+    messageSets: MessageSetDetail[],
+    options: {
+        includeReplies: boolean;
+        responseMode: "all" | "selected";
+    },
+): Promise<Turn[]> {
+    const sortedSets = messageSets
+        .slice()
+        .sort(
+            (a, b) =>
+                a.level - b.level || a.createdAt.localeCompare(b.createdAt),
+        );
+    const turns: Turn[] = [];
+
+    for (let index = 0; index < sortedSets.length; index++) {
+        const messageSet = sortedSets[index];
+
+        if (messageSet.type === "user") {
+            const nextSet = sortedSets[index + 1];
+            const turn: Turn = {
+                level: messageSet.level,
+                user: messageSet.userBlock.message
+                    ? {
+                          ...toExportMessage(messageSet.userBlock.message),
+                          timestamp: messageSet.createdAt,
+                      }
+                    : undefined,
                 responses: [],
-            });
-        }
-
-        const turn = turnMap.get(message.turn_index)!;
-
-        if (message.model === "user") {
-            if (turn.user.content) {
-                console.warn(
-                    `Export: multiple user messages for turn ${message.turn_index}; keeping the latest`,
-                );
-            }
-            turn.user = {
-                content: message.text,
-                timestamp: message.created_at,
             };
-        } else {
-            turn.responses.push({
-                model: message.model,
-                content: message.text,
-                timestamp: message.created_at,
-            });
+
+            if (
+                nextSet?.type === "ai" &&
+                nextSet.level === messageSet.level + 1
+            ) {
+                const responses = exportableResponses(
+                    nextSet,
+                    options.responseMode,
+                );
+                turn.responses = await Promise.all(
+                    responses.map(async (message) => {
+                        const response = {
+                            ...toExportMessage(message),
+                            timestamp: nextSet.createdAt,
+                        };
+                        return options.includeReplies
+                            ? attachReplies(response, message)
+                            : response;
+                    }),
+                );
+                index++;
+            }
+
+            turns.push(turn);
+            continue;
         }
+
+        const responses = exportableResponses(messageSet, options.responseMode);
+        turns.push({
+            level: messageSet.level,
+            responses: await Promise.all(
+                responses.map(async (message) => {
+                    const response = {
+                        ...toExportMessage(message),
+                        timestamp: messageSet.createdAt,
+                    };
+                    return options.includeReplies
+                        ? attachReplies(response, message)
+                        : response;
+                }),
+            ),
+        });
     }
 
-    return Array.from(turnMap.values());
+    return turns.filter((turn) => turn.user || turn.responses.length > 0);
 }
 
-async function fetchExportData(chatId: string): Promise<ExportData> {
+async function buildReplyTurns(replyChatId: string): Promise<Turn[]> {
+    const [chat, messageSets] = await Promise.all([
+        fetchChat(replyChatId),
+        fetchMessageSets(replyChatId),
+    ]);
+    const chatCreatedAt = new Date(chat.createdAt).getTime();
+    const replyMessageSets = messageSets.filter(
+        (messageSet) =>
+            hasNonCopiedMessages(messageSet) &&
+            new Date(messageSet.createdAt).getTime() >= chatCreatedAt,
+    );
+
+    return buildTurnsFromMessageSets(replyMessageSets, {
+        includeReplies: false,
+        responseMode: "selected",
+    });
+}
+
+async function fetchChatExportData(chatId: string): Promise<ExportData> {
     const chat = await fetchChat(chatId);
-    const messages = await fetchChatMessages(chatId);
-    const turns = groupMessagesByTurns(messages);
+    const messageSets = await fetchMessageSets(chatId);
+    const turns = await buildTurnsFromMessageSets(messageSets, {
+        includeReplies: true,
+        responseMode: "all",
+    });
 
     return {
+        exportType: "chat",
         chatId: chat.id,
         title: chat.title || "Untitled Chat",
         createdAt: chat.createdAt,
+        exportedAt: new Date().toISOString(),
         turns,
+    };
+}
+
+async function fetchMessageThreadExportData(
+    messageId: string,
+): Promise<ExportData> {
+    const sourceMessage = await fetchMessage(messageId);
+    if (!sourceMessage) {
+        throw new Error(`Message not found: ${messageId}`);
+    }
+
+    const [chat, messageSets] = await Promise.all([
+        fetchChat(sourceMessage.chatId),
+        fetchMessageSets(sourceMessage.chatId),
+    ]);
+    const responseSet = messageSets.find(
+        (messageSet) => messageSet.id === sourceMessage.messageSetId,
+    );
+    if (!responseSet) {
+        throw new Error(`Message set not found: ${sourceMessage.messageSetId}`);
+    }
+
+    const userSet = messageSets.find(
+        (messageSet) =>
+            messageSet.type === "user" &&
+            messageSet.level === responseSet.level - 1,
+    );
+
+    const sourceMessageWithParts =
+        exportableResponses(responseSet, "all").find(
+            (message) => message.id === messageId,
+        ) ?? sourceMessage;
+    const response = await attachReplies(
+        {
+            ...toExportMessage(sourceMessageWithParts),
+            timestamp: responseSet.createdAt,
+        },
+        sourceMessageWithParts,
+    );
+
+    return {
+        exportType: "message-thread",
+        chatId: chat.id,
+        title: `${chat.title || "Untitled Chat"} - ${sourceMessage.model}`,
+        createdAt: chat.createdAt,
+        exportedAt: new Date().toISOString(),
+        sourceMessageId: sourceMessage.id,
+        sourceModel: sourceMessage.model,
+        turns: [
+            {
+                level: userSet?.level ?? responseSet.level,
+                user: userSet?.userBlock.message
+                    ? {
+                          ...toExportMessage(userSet.userBlock.message),
+                          timestamp: userSet.createdAt,
+                      }
+                    : undefined,
+                responses: [response],
+            },
+        ],
     };
 }
 
@@ -137,6 +309,7 @@ function sanitizeFilename(name: string): string {
         // Strip path separators and characters illegal on Windows / problematic on macOS
         .replace(/[/\\:*?"<>|]/g, "_")
         // Strip control characters (NUL, BEL, etc.) that some filesystems reject
+        // eslint-disable-next-line no-control-regex
         .replace(/[\x00-\x1f\x7f]/g, "")
         .trim()
         // Trailing dots and spaces are stripped on Windows; trim them ourselves
@@ -180,30 +353,43 @@ function formatAsMarkdown(data: ExportData): string {
     let md = `# ${escapeMarkdownInline(data.title || "Untitled Chat")}\n`;
     // ISO date so exports are deterministic across users/locales.
     md += `Created: ${new Date(data.createdAt).toISOString().slice(0, 10)}\n\n`;
+    md += `Export: ${data.exportType === "chat" ? "Full chat" : "Model thread"}\n\n`;
     md += `---\n\n`;
 
-    for (const turn of data.turns) {
-        if (turn.user.content) {
+    data.turns.forEach((turn, index) => {
+        md += `## Turn ${index + 1}\n\n`;
+        if (turn.user?.content) {
             md += `### You\n${escapeMarkdownContent(turn.user.content)}\n\n`;
         }
 
         for (const response of turn.responses) {
             md += `### ${escapeMarkdownInline(response.model)}\n${escapeMarkdownContent(response.content)}\n\n`;
+            if (response.replies && response.replies.length > 0) {
+                md += `#### Replies\n\n`;
+                response.replies.forEach((replyTurn, replyIndex) => {
+                    md += `##### Reply ${replyIndex + 1}\n\n`;
+                    if (replyTurn.user?.content) {
+                        md += `###### You\n${escapeMarkdownContent(replyTurn.user.content)}\n\n`;
+                    }
+                    for (const replyResponse of replyTurn.responses) {
+                        md += `###### ${escapeMarkdownInline(replyResponse.model)}\n${escapeMarkdownContent(replyResponse.content)}\n\n`;
+                    }
+                });
+            }
         }
 
         md += `---\n\n`;
-    }
+    });
 
     return md;
 }
 
 async function exportChat(
-    chatId: string,
+    data: ExportData,
     extension: "json" | "md",
     formatName: string,
     formatter: (data: ExportData) => string,
 ): Promise<boolean> {
-    const data = await fetchExportData(chatId);
     const content = formatter(data);
 
     const filePath = await save({
@@ -217,9 +403,27 @@ async function exportChat(
 }
 
 export function exportChatAsJSON(chatId: string): Promise<boolean> {
-    return exportChat(chatId, "json", "JSON", formatAsJSON);
+    return fetchChatExportData(chatId).then((data) =>
+        exportChat(data, "json", "JSON", formatAsJSON),
+    );
 }
 
 export function exportChatAsMarkdown(chatId: string): Promise<boolean> {
-    return exportChat(chatId, "md", "Markdown", formatAsMarkdown);
+    return fetchChatExportData(chatId).then((data) =>
+        exportChat(data, "md", "Markdown", formatAsMarkdown),
+    );
+}
+
+export function exportMessageThreadAsJSON(messageId: string): Promise<boolean> {
+    return fetchMessageThreadExportData(messageId).then((data) =>
+        exportChat(data, "json", "JSON", formatAsJSON),
+    );
+}
+
+export function exportMessageThreadAsMarkdown(
+    messageId: string,
+): Promise<boolean> {
+    return fetchMessageThreadExportData(messageId).then((data) =>
+        exportChat(data, "md", "Markdown", formatAsMarkdown),
+    );
 }

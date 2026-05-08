@@ -116,7 +116,9 @@ import * as ProjectAPI from "@core/chorus/api/ProjectAPI";
 import * as ModelsAPI from "@core/chorus/api/ModelsAPI";
 import * as AttachmentsAPI from "@core/chorus/api/AttachmentsAPI";
 import * as DraftAPI from "@core/chorus/api/DraftAPI";
+import * as ExportAPI from "@core/chorus/api/ExportAPI";
 import SimpleCopyButton from "./unused/CopyButton";
+import ExportDropdownButton from "./ExportDropdownButton";
 import { MessageCostDisplay } from "./MessageCostDisplay";
 import * as AppMetadataAPI from "@core/chorus/api/AppMetadataAPI";
 import {
@@ -1166,6 +1168,35 @@ export function ToolsMessageView({
         replyToId: message.id,
     });
     const modelConfigsQuery = ModelsAPI.useModelConfigs();
+    const handleExport = useCallback(
+        async (format: "JSON" | "Markdown") => {
+            try {
+                const saved =
+                    format === "JSON"
+                        ? await ExportAPI.exportMessageThreadAsJSON(message.id)
+                        : await ExportAPI.exportMessageThreadAsMarkdown(
+                              message.id,
+                          );
+                if (saved) toast.success(`Thread exported as ${format}`);
+            } catch (error) {
+                const detail =
+                    error instanceof Error ? error.message : String(error);
+                toast.error(`Failed to export thread: ${detail}`);
+                console.error(error);
+            }
+        },
+        [message.id],
+    );
+
+    const handleExportJSON = useCallback(
+        () => handleExport("JSON"),
+        [handleExport],
+    );
+
+    const handleExportMarkdown = useCallback(
+        () => handleExport("Markdown"),
+        [handleExport],
+    );
     // // Set stream start time when streaming begins
     // useEffect(() => {
     //     if (message.state === "streaming" && !streamStartTime) {
@@ -1279,7 +1310,9 @@ export function ToolsMessageView({
                             >
                                 <div
                                     className={`gap-2 text-muted-foreground px-2
-                                    hidden group-hover/message-set-view:flex
+                                    flex opacity-0 pointer-events-none
+                                    group-hover/message-set-view:opacity-100 group-hover/message-set-view:pointer-events-auto
+                                    focus-within:opacity-100 focus-within:pointer-events-auto
                                     bg-background
                                     ${isQuickChatWindow ? "rounded-lg p-1" : ""}`}
                                 >
@@ -1389,6 +1422,17 @@ export function ToolsMessageView({
                                         </TooltipTrigger>
                                         <TooltipContent>Copy</TooltipContent>
                                     </Tooltip>
+
+                                    {!isQuickChatWindow && (
+                                        <ExportDropdownButton
+                                            onExportJSON={handleExportJSON}
+                                            onExportMarkdown={
+                                                handleExportMarkdown
+                                            }
+                                            className="hover:text-foreground outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                                            iconClassName="w-3.5 h-3.5"
+                                        />
+                                    )}
 
                                     <Tooltip>
                                         <TooltipTrigger asChild>

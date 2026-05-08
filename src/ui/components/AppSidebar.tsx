@@ -11,7 +11,6 @@ import {
     EllipsisIcon,
     Pin,
     PinOff,
-    Download,
     GripVertical,
 } from "lucide-react";
 import {
@@ -58,17 +57,12 @@ import {
     DialogHeader,
     DialogTitle,
 } from "./ui/dialog";
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
 import * as ChatAPI from "@core/chorus/api/ChatAPI";
 import * as ProjectAPI from "@core/chorus/api/ProjectAPI";
 import { formatCost } from "@core/chorus/api/CostAPI";
 import * as ExportAPI from "@core/chorus/api/ExportAPI";
 import RetroSpinner from "./ui/retro-spinner";
+import ExportDropdownButton from "./ExportDropdownButton";
 import FeedbackButton from "./FeedbackButton";
 import { SpeakerLoudIcon } from "@radix-ui/react-icons";
 import { emit } from "@tauri-apps/api/event";
@@ -1080,14 +1074,6 @@ type ChatListItemViewProps = {
 const sidebarActionButtonClass =
     "flex items-center justify-center outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0";
 
-function waitForNextPaint() {
-    return new Promise<void>((resolve) => {
-        window.requestAnimationFrame(() => {
-            window.requestAnimationFrame(() => resolve());
-        });
-    });
-}
-
 const ChatListItemView = React.memo(
     ({
         chatId,
@@ -1112,46 +1098,6 @@ const ChatListItemView = React.memo(
         chatCost,
         showCost,
     }: ChatListItemViewProps) => {
-        const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
-        const [exportTooltipOpen, setExportTooltipOpen] = useState(false);
-        const [suppressExportTooltip, setSuppressExportTooltip] =
-            useState(false);
-        const chatActionsRef = useRef<HTMLDivElement>(null);
-        const exportButtonRef = useRef<HTMLButtonElement>(null);
-
-        const clearSidebarActionFocus = useCallback(() => {
-            const activeElement = document.activeElement;
-            if (
-                activeElement instanceof HTMLElement &&
-                chatActionsRef.current?.contains(activeElement)
-            ) {
-                activeElement.blur();
-            }
-            exportButtonRef.current?.blur();
-        }, []);
-
-        const dismissExportChrome = useCallback(() => {
-            setExportDropdownOpen(false);
-            setExportTooltipOpen(false);
-            setSuppressExportTooltip(true);
-            clearSidebarActionFocus();
-        }, [clearSidebarActionFocus]);
-
-        const handleExportSelection = useCallback(
-            (runExport: () => Promise<void>) => {
-                dismissExportChrome();
-                void (async () => {
-                    await waitForNextPaint();
-                    try {
-                        await runExport();
-                    } finally {
-                        clearSidebarActionFocus();
-                    }
-                })();
-            },
-            [clearSidebarActionFocus, dismissExportChrome],
-        );
-
         return (
             <div
                 key={chatId + "-sidebar"}
@@ -1226,10 +1172,7 @@ const ChatListItemView = React.memo(
                         <div className="absolute right-0 w-36 h-full opacity-0 group-hover/chat-button:opacity-100 transition-opacity bg-gradient-to-l from-sidebar-accent from-[65%] to-transparent pointer-events-none" />
 
                         {/* chat actions */}
-                        <div
-                            ref={chatActionsRef}
-                            className="flex items-center gap-2 absolute right-3 z-10"
-                        >
+                        <div className="flex items-center gap-2 absolute right-3 z-10">
                             <Tooltip>
                                 <TooltipTrigger asChild>
                                     <button
@@ -1252,95 +1195,12 @@ const ChatListItemView = React.memo(
                                     {isPinned ? "Unpin chat" : "Pin chat"}
                                 </TooltipContent>
                             </Tooltip>
-                            <DropdownMenu
-                                open={exportDropdownOpen}
-                                onOpenChange={(open) => {
-                                    setExportDropdownOpen(open);
-                                    if (!open) {
-                                        setExportTooltipOpen(false);
-                                        clearSidebarActionFocus();
-                                    }
-                                }}
-                            >
-                                <Tooltip
-                                    open={
-                                        exportDropdownOpen ||
-                                        suppressExportTooltip
-                                            ? false
-                                            : exportTooltipOpen
-                                    }
-                                    onOpenChange={(open) => {
-                                        if (
-                                            exportDropdownOpen ||
-                                            suppressExportTooltip
-                                        ) {
-                                            setExportTooltipOpen(false);
-                                            return;
-                                        }
-                                        setExportTooltipOpen(open);
-                                    }}
-                                >
-                                    <TooltipTrigger asChild>
-                                        <DropdownMenuTrigger asChild>
-                                            <button
-                                                ref={exportButtonRef}
-                                                type="button"
-                                                aria-label="Export chat"
-                                                onClick={(e) => {
-                                                    e.preventDefault();
-                                                    e.stopPropagation();
-                                                }}
-                                                onPointerDown={() => {
-                                                    setExportTooltipOpen(false);
-                                                }}
-                                                onPointerLeave={() => {
-                                                    setExportTooltipOpen(false);
-                                                    setSuppressExportTooltip(
-                                                        false,
-                                                    );
-                                                }}
-                                                className={
-                                                    sidebarActionButtonClass
-                                                }
-                                            >
-                                                <Download className="h-[13px] w-[13px] opacity-0 group-hover/chat-button:opacity-100 transition-opacity text-muted-foreground hover:text-foreground" />
-                                            </button>
-                                        </DropdownMenuTrigger>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="bottom">
-                                        Export chat
-                                    </TooltipContent>
-                                </Tooltip>
-                                <DropdownMenuContent
-                                    align="end"
-                                    onClick={(e) => e.stopPropagation()}
-                                    onCloseAutoFocus={(e) => {
-                                        e.preventDefault();
-                                        clearSidebarActionFocus();
-                                    }}
-                                >
-                                    <DropdownMenuItem
-                                        onSelect={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            handleExportSelection(onExportJSON);
-                                        }}
-                                    >
-                                        Export as JSON
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                        onSelect={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            handleExportSelection(
-                                                onExportMarkdown,
-                                            );
-                                        }}
-                                    >
-                                        Export as Markdown
-                                    </DropdownMenuItem>
-                                </DropdownMenuContent>
-                            </DropdownMenu>
+                            <ExportDropdownButton
+                                onExportJSON={onExportJSON}
+                                onExportMarkdown={onExportMarkdown}
+                                className={sidebarActionButtonClass}
+                                iconClassName="h-[13px] w-[13px] opacity-0 group-hover/chat-button:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                            />
                             <Tooltip>
                                 <TooltipTrigger asChild>
                                     <PencilOptimized
