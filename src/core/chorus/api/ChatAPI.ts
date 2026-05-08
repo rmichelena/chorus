@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { produce } from "immer";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { db } from "../DB";
 import { getVersion } from "@tauri-apps/api/app";
 import { usePostHog } from "posthog-js/react";
@@ -36,8 +37,7 @@ export type Chat = {
     projectContextSummaryIsStale: boolean;
     replyToId: string | null;
     gcPrototype: boolean;
-
-    pinned: boolean; // deprecated
+    pinned: boolean;
 
     // Cost tracking
     totalCostUsd?: number;
@@ -103,7 +103,7 @@ export async function fetchChats(): Promise<Chat[]> {
             project_context_summary, project_context_summary_is_stale, reply_to_id, gc_prototype_chat, total_cost_usd
             FROM chats
             WHERE reply_to_id IS NULL
-            ORDER BY updated_at DESC`,
+            ORDER BY pinned DESC, updated_at DESC`,
         )
         .then((rows) => rows.map(readChat));
 }
@@ -141,9 +141,15 @@ export function useCacheUpdateChat() {
                     updateFn(chat);
                     // NOTE: We don't always need to sort, if this becomes expensive we could gate
                     // this behind a flag
-                    draft.sort((a, b) =>
-                        b.updatedAt.localeCompare(a.updatedAt),
-                    );
+                    draft.sort((a, b) => {
+                        // Pinned chats first (Number(true)=1, Number(false)=0,
+                        // so b.pinned - a.pinned puts pinned ones at the top),
+                        // then by updatedAt descending.
+                        const pinnedDiff =
+                            Number(b.pinned) - Number(a.pinned);
+                        if (pinnedDiff !== 0) return pinnedDiff;
+                        return b.updatedAt.localeCompare(a.updatedAt);
+                    });
                 }
             }),
         );
@@ -393,6 +399,52 @@ export function useRenameChat() {
             await queryClient.invalidateQueries(
                 chatQueries.detail(variables.chatId),
             );
+        },
+    });
+}
+
+export function useTogglePinChat() {
+    const queryClient = useQueryClient();
+    const cacheUpdateChat = useCacheUpdateChat();
+
+    return useMutation({
+        mutationKey: ["togglePinChat"] as const,
+        mutationFn: async ({ chatId, pinned }: { chatId: string; pinned: boolean }) => {
+            await db.execute("UPDATE chats SET pinned = $1 WHERE id = $2", [
+                pinned ? 1 : 0,
+                chatId,
+            ]);
+            return { chatId, pinned };
+        },
+        onMutate: ({ chatId, pinned }) => {
+            // Optimistic update: flip the cached value immediately so the
+            // sidebar reflects the change before the DB round-trip. Capture
+            // the previous list so we can roll back on failure.
+            const previousList = queryClient.getQueryData<Chat[]>(
+                chatQueries.list().queryKey,
+            );
+            cacheUpdateChat(chatId, (chat) => {
+                chat.pinned = pinned;
+            });
+            return { previousList };
+        },
+        onError: (error, _variables, context) => {
+            if (context?.previousList) {
+                queryClient.setQueryData(
+                    chatQueries.list().queryKey,
+                    context.previousList,
+                );
+            }
+            toast.error("Failed to update pin status");
+            console.error(error);
+        },
+        onSettled: async (_data, _error, variables) => {
+            await Promise.all([
+                queryClient.invalidateQueries(chatQueries.list()),
+                queryClient.invalidateQueries(
+                    chatQueries.detail(variables.chatId),
+                ),
+            ]);
         },
     });
 }

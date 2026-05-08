@@ -9,6 +9,9 @@ import {
     SquarePlusIcon,
     ArrowBigUpIcon,
     EllipsisIcon,
+    Pin,
+    PinOff,
+    GripVertical,
 } from "lucide-react";
 import {
     Sidebar,
@@ -57,12 +60,15 @@ import {
 import * as ChatAPI from "@core/chorus/api/ChatAPI";
 import * as ProjectAPI from "@core/chorus/api/ProjectAPI";
 import { formatCost } from "@core/chorus/api/CostAPI";
+import * as ExportAPI from "@core/chorus/api/ExportAPI";
 import RetroSpinner from "./ui/retro-spinner";
+import ExportDropdownButton from "./ExportDropdownButton";
 import FeedbackButton from "./FeedbackButton";
 import { SpeakerLoudIcon } from "@radix-ui/react-icons";
 import { emit } from "@tauri-apps/api/event";
 import { projectDisplayName } from "@ui/lib/utils";
 import { useQuery } from "@tanstack/react-query";
+import { useSidebar } from "@ui/hooks/useSidebar";
 import {
     DndContext,
     DragEndEvent,
@@ -206,7 +212,13 @@ function DevModeIndicator() {
     );
 }
 
-export function AppSidebar() {
+export function AppSidebar({
+    currentWidth = 256,
+    onWidthChange,
+}: {
+    currentWidth?: number;
+    onWidthChange?: (w: number) => void;
+}) {
     return (
         <>
             <Sidebar
@@ -217,7 +229,65 @@ export function AppSidebar() {
                 <DevModeIndicator />
                 <AppSidebarInner />
             </Sidebar>
+            <SidebarResizeHandle
+                currentWidth={currentWidth}
+                onWidthChange={onWidthChange}
+            />
         </>
+    );
+}
+
+function SidebarResizeHandle({
+    currentWidth,
+    onWidthChange,
+}: {
+    currentWidth: number;
+    onWidthChange?: (w: number) => void;
+}) {
+    const { state } = useSidebar();
+    const [isDragging, setIsDragging] = useState(false);
+
+    if (state !== "expanded") return null;
+
+    const handleMouseDown = (e: React.MouseEvent) => {
+        e.preventDefault();
+        const startX = e.clientX;
+        const startWidth = currentWidth;
+        setIsDragging(true);
+
+        const handleMouseMove = (ev: MouseEvent) => {
+            const newWidth = Math.max(
+                160,
+                Math.min(520, startWidth + (ev.clientX - startX)),
+            );
+            onWidthChange?.(newWidth);
+        };
+
+        const handleMouseUp = () => {
+            setIsDragging(false);
+            document.removeEventListener("mousemove", handleMouseMove);
+            document.removeEventListener("mouseup", handleMouseUp);
+        };
+
+        document.addEventListener("mousemove", handleMouseMove);
+        document.addEventListener("mouseup", handleMouseUp);
+    };
+
+    return (
+        <div
+            className={`group/resize-handle w-1 cursor-col-resize flex-shrink-0 z-20 flex items-center justify-center transition-colors ${
+                isDragging ? "bg-border" : "hover:bg-border/50"
+            }`}
+            onMouseDown={handleMouseDown}
+        >
+            <GripVertical
+                className={`h-4 w-3 text-muted-foreground/40 transition-opacity ${
+                    isDragging
+                        ? "opacity-100"
+                        : "opacity-0 group-hover/resize-handle:opacity-100"
+                }`}
+            />
+        </div>
     );
 }
 
@@ -469,17 +539,25 @@ export function AppSidebarInner() {
             ),
         [chatsByProject, currentChatId],
     );
+    const pinnedChats = useMemo(
+        () => defaultChats.filter((c) => c.pinned),
+        [defaultChats],
+    );
+    const unpinnedChats = useMemo(
+        () => defaultChats.filter((c) => !c.pinned),
+        [defaultChats],
+    );
     const groupedChats = useMemo(
         () =>
             groupChatsByDate(
                 showAllChats
-                    ? defaultChats
-                    : defaultChats.slice(
+                    ? unpinnedChats
+                    : unpinnedChats.slice(
                           0,
                           NUM_DEFAULT_CHATS_TO_SHOW_BY_DEFAULT,
                       ),
             ),
-        [defaultChats, showAllChats],
+        [unpinnedChats, showAllChats],
     );
     const quickChats = useMemo(
         () =>
@@ -624,6 +702,24 @@ export function AppSidebarInner() {
                                 <div className="h-3" />
 
                                 <Droppable id="default">
+                                    {/* Pinned chats */}
+                                    {pinnedChats.length > 0 && (
+                                        <div className="pb-3">
+                                            <div className="px-3 mb-1 sidebar-label flex items-center gap-2 text-muted-foreground">
+                                                Pinned
+                                            </div>
+                                            {pinnedChats.map((chat) => (
+                                                <ChatListItem
+                                                    key={chat.id + "-sidebar"}
+                                                    chat={chat}
+                                                    isActive={
+                                                        currentChatId ===
+                                                        chat.id
+                                                    }
+                                                />
+                                            ))}
+                                        </div>
+                                    )}
                                     {/* Grouped chats */}
                                     {groupedChats.length > 0 ? (
                                         groupedChats.map(
@@ -654,7 +750,7 @@ export function AppSidebarInner() {
                                     ) : (
                                         <EmptyChatState />
                                     )}
-                                    {defaultChats.length >
+                                    {unpinnedChats.length >
                                         NUM_DEFAULT_CHATS_TO_SHOW_BY_DEFAULT &&
                                         !showAllChats && (
                                             <SidebarMenuItem className="w-full">
@@ -821,6 +917,7 @@ function ChatListItem({ chat, isActive }: { chat: Chat; isActive: boolean }) {
         mutateAsync: deleteChatMutateAsync,
         isPending: deleteChatIsPending,
     } = ChatAPI.useDeleteChat();
+    const { mutate: togglePinChat } = ChatAPI.useTogglePinChat();
     const { data: parentChat } = useQuery(
         ChatAPI.chatQueries.detail(chat.parentChatId ?? undefined),
     );
@@ -883,11 +980,52 @@ function ChatListItem({ chat, isActive }: { chat: Chat; isActive: boolean }) {
     );
     const showCost = settings?.showCost ?? false;
 
+    const handleTogglePin = useCallback(
+        (e: React.MouseEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            togglePinChat({
+                chatId: chat.id,
+                pinned: !chat.pinned,
+            });
+        },
+        [chat.id, chat.pinned, togglePinChat],
+    );
+
+    const handleExport = useCallback(
+        async (format: "JSON" | "Markdown") => {
+            try {
+                const saved =
+                    format === "JSON"
+                        ? await ExportAPI.exportChatAsJSON(chat.id)
+                        : await ExportAPI.exportChatAsMarkdown(chat.id);
+                if (saved) toast.success(`Chat exported as ${format}`);
+            } catch (error) {
+                const detail =
+                    error instanceof Error ? error.message : String(error);
+                toast.error(`Failed to export chat: ${detail}`);
+                console.error(error);
+            }
+        },
+        [chat.id],
+    );
+
+    const handleExportJSON = useCallback(
+        () => handleExport("JSON"),
+        [handleExport],
+    );
+
+    const handleExportMarkdown = useCallback(
+        () => handleExport("Markdown"),
+        [handleExport],
+    );
+
     return (
         <ChatListItemView
             chatId={chat.id}
             chatTitle={chat.title || ""}
             isNewChat={chat.isNewChat}
+            isPinned={chat.pinned}
             parentChatId={parentChat?.id ?? null}
             parentChatTitle={parentChat?.title || null}
             isActive={isActive}
@@ -895,6 +1033,9 @@ function ChatListItem({ chat, isActive }: { chat: Chat; isActive: boolean }) {
             onStartEdit={handleStartEdit}
             onStopEdit={handleStopEdit}
             onSubmitEdit={handleSubmitEdit}
+            onTogglePin={handleTogglePin}
+            onExportJSON={handleExportJSON}
+            onExportMarkdown={handleExportMarkdown}
             onDelete={handleOpenDeleteDialog}
             onConfirmDelete={handleConfirmDelete}
             deleteIsPending={deleteChatIsPending}
@@ -910,6 +1051,7 @@ type ChatListItemViewProps = {
     chatId: string;
     chatTitle: string;
     isNewChat: boolean;
+    isPinned: boolean;
     parentChatId: string | null;
     parentChatTitle: string | null;
     isActive: boolean;
@@ -917,6 +1059,9 @@ type ChatListItemViewProps = {
     onStartEdit: () => void;
     onStopEdit: () => void;
     onSubmitEdit: (newTitle: string) => Promise<void>;
+    onTogglePin: (e: React.MouseEvent) => void;
+    onExportJSON: () => Promise<void>;
+    onExportMarkdown: () => Promise<void>;
     onDelete: () => void;
     onConfirmDelete: () => void;
     deleteIsPending: boolean;
@@ -926,11 +1071,15 @@ type ChatListItemViewProps = {
     showCost: boolean;
 };
 
+const sidebarActionButtonClass =
+    "flex items-center justify-center outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0";
+
 const ChatListItemView = React.memo(
     ({
         chatId,
         chatTitle,
         isNewChat,
+        isPinned,
         parentChatId,
         parentChatTitle,
         isActive,
@@ -938,6 +1087,9 @@ const ChatListItemView = React.memo(
         onStartEdit,
         onStopEdit,
         onSubmitEdit,
+        onTogglePin,
+        onExportJSON,
+        onExportMarkdown,
         onDelete,
         onConfirmDelete,
         deleteIsPending,
@@ -1017,10 +1169,38 @@ const ChatListItemView = React.memo(
                         </div>
 
                         {/* Gradient overlay that appears when hovering */}
-                        <div className="absolute right-0 w-20 h-full opacity-0 group-hover/chat-button:opacity-100 transition-opacity bg-gradient-to-l from-sidebar-accent via-sidebar-accent to-transparent pointer-events-none" />
+                        <div className="absolute right-0 w-36 h-full opacity-0 group-hover/chat-button:opacity-100 transition-opacity bg-gradient-to-l from-sidebar-accent from-[65%] to-transparent pointer-events-none" />
 
                         {/* chat actions */}
                         <div className="flex items-center gap-2 absolute right-3 z-10">
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <button
+                                        type="button"
+                                        onClick={onTogglePin}
+                                        aria-label={
+                                            isPinned ? "Unpin chat" : "Pin chat"
+                                        }
+                                        aria-pressed={isPinned}
+                                        className={sidebarActionButtonClass}
+                                    >
+                                        {isPinned ? (
+                                            <PinOff className="h-[13px] w-[13px] opacity-100 transition-opacity text-muted-foreground hover:text-foreground" />
+                                        ) : (
+                                            <Pin className="h-[13px] w-[13px] opacity-0 group-hover/chat-button:opacity-100 transition-opacity text-muted-foreground hover:text-foreground" />
+                                        )}
+                                    </button>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom">
+                                    {isPinned ? "Unpin chat" : "Pin chat"}
+                                </TooltipContent>
+                            </Tooltip>
+                            <ExportDropdownButton
+                                onExportJSON={onExportJSON}
+                                onExportMarkdown={onExportMarkdown}
+                                className={sidebarActionButtonClass}
+                                iconClassName="h-[13px] w-[13px] opacity-0 group-hover/chat-button:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                            />
                             <Tooltip>
                                 <TooltipTrigger asChild>
                                     <PencilOptimized

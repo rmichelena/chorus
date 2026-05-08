@@ -6,7 +6,7 @@ import {
     useNavigate,
     useLocation,
 } from "react-router-dom";
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef, type CSSProperties } from "react";
 import "./App.css";
 import { AppProvider } from "./providers/AppProvider";
 import { useAppContext } from "@ui/hooks/useAppContext";
@@ -186,6 +186,16 @@ function AppContent() {
     const { db } = useDatabase();
 
     const { isQuickChatWindow, zoomLevel, setZoomLevel } = useAppContext();
+
+    const [sidebarWidthPx, setSidebarWidthPx] = useState(() => {
+        const saved = localStorage.getItem("sidebar-width-px");
+        return saved ? parseInt(saved, 10) : 256;
+    });
+
+    const handleSidebarWidthChange = (w: number) => {
+        setSidebarWidthPx(w);
+        localStorage.setItem("sidebar-width-px", String(w));
+    };
     const isSettingsDialogOpen = useDialogStore(
         (state) => state.activeDialogId === SETTINGS_DIALOG_ID,
     );
@@ -881,8 +891,19 @@ function AppContent() {
             <div
                 className={`select-none ${isQuickChatWindow ? "bg-transparent" : "bg-background"}`}
             >
-                <SidebarProvider>
-                    {!isQuickChatWindow && <AppSidebar />}
+                <SidebarProvider
+                    style={
+                        {
+                            "--sidebar-width": `${sidebarWidthPx}px`,
+                        } as CSSProperties
+                    }
+                >
+                    {!isQuickChatWindow && (
+                        <AppSidebar
+                            currentWidth={sidebarWidthPx}
+                            onWidthChange={handleSidebarWidthChange}
+                        />
+                    )}
 
                     {!isQuickChatWindow && <CommandMenu />}
                     <Routes>
